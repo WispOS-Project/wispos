@@ -10,12 +10,15 @@ HERE = Path(__file__).resolve().parent
 HOOK = HERE / 'githooks' / 'commit-msg'
 
 
-def verdict(message):
+def verdict(message, merge=False):
     with tempfile.TemporaryDirectory(prefix='wispos-msg-') as root:
+        subprocess.run(['git', 'init', '-q', root], check=True)
+        if merge:
+            (Path(root) / '.git/MERGE_HEAD').write_text('a' * 40 + '\n')
         f = Path(root) / 'msg'
         f.write_text(message)
         return subprocess.run(['sh', str(HOOK), str(f)],
-                              capture_output=True, text=True).returncode
+                              cwd=root, capture_output=True, text=True).returncode
 
 
 class CommitHookTests(unittest.TestCase):
@@ -29,7 +32,29 @@ class CommitHookTests(unittest.TestCase):
         self.assertEqual(verdict('release: 0.2.0\n\nRefs #8\n'), 0)
 
     def test_merge_commit_is_exempt(self):
-        self.assertEqual(verdict("Merge branch 'main' into dev\n"), 0)
+        self.assertEqual(verdict("Merge branch 'main' into dev\n", merge=True), 0)
+
+    def test_merge_subject_without_merge_state_is_rejected(self):
+        self.assertEqual(verdict("Merge anything\n"), 1)
+
+    def test_actual_verbose_boundary_removes_diff_issue_refs(self):
+        self.assertEqual(verdict('docs: notes\n'
+                                 '# ------------------------ >8 ------------------------\n'
+                                 'diff --git a/f b/f\n+Refs #99\n'), 1)
+
+    def test_installer_does_not_change_sibling_worktree(self):
+        with tempfile.TemporaryDirectory(prefix='wispos-worktrees-') as root:
+            repo = Path(root) / 'repo'; sibling = Path(root) / 'sibling'
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            subprocess.run(['git', '-c', 'user.name=Test', '-c',
+                            'user.email=test@example.com', 'commit', '--allow-empty',
+                            '-qm', 'seed'], cwd=repo, check=True)
+            subprocess.run(['git', 'worktree', 'add', '-q', '--detach', str(sibling)],
+                           cwd=repo, check=True)
+            subprocess.run(['sh', str(HERE / 'install-hooks.sh')], cwd=repo,
+                           check=True, capture_output=True)
+            self.assertEqual(subprocess.run(['git', 'config', '--get', 'core.hooksPath'],
+                                            cwd=sibling, capture_output=True).returncode, 1)
 
     def test_missing_issue_link_is_rejected(self):
         self.assertEqual(verdict('fix: heal the dirty bit\n'), 1)

@@ -48,7 +48,7 @@ See [the release guide](docs/RELEASING.md) for the build and update sequence.
 
 Every behavior change adds an Unreleased changelog entry with its SemVer class.
 Use conventional commit subjects and an issue footer (`Refs #N`, or `Fixes #N`
-when complete). Run `tools/install-hooks.sh` once per clone for the commit backstop.
+when complete). Run `tools/install-hooks.sh` once per clone/worktree for the commit backstop.
 PRs use a conventional title and Summary, Proof, Issue sections. Keep public text
 self-contained, free of private workspace details, and explicit about missing proof.
 Handle every review finding by fixing it, filing follow-up work, or rebutting it

@@ -6,6 +6,8 @@ policy in `AGENTS.md`.
 
 ## [Unreleased]
 
+- **Commit validation bypasses repaired (tooling fix, PATCH; #27):** ignore Git’s verbose diff after the real scissors boundary, exempt merge subjects only during a merge, and scope hook installation to its worktree. Three regression tests failed before the fixes and pass afterward. No appliance runtime change.
+
 - **Direct development and release workflow (documentation; no runtime SemVer change; #27):** document one canonical code checkout for both image variants, contributor PRs, verification, and signed dev updates. Add the commit-message hook and installer for contributor clones.
 
 - **Steam UI ships the spike-measured flags and a 550 MiB idle ceiling (change, PATCH; steamwebhelper spike 2026-10-16/17, issue #2):** the taskset shim now injects `--enable-low-end-device-mode --disable-gpu-rasterization --disable-back-forward-cache` instead of the 2026-10-14 GPU-raster/zero-copy/low-end trio (zero-copy was the worst single option for throttle events, GPU raster lost on frame pacing and faulted Panfrost twice), and `wisp-ui-reclaim`'s idle default moves 450 to 550 MiB (the interactive UI sits at 390-440 MiB and throttled on every navigation at 450; zero `memory.high` events at 550, game-state ceiling unchanged at 250 MiB). Tests updated (`test_taskset_shim`, `test_ui_reclaim`, `qemu-test.sh`); dev helper `dev-up.sh` follows. Residual: ~420-590 ms per-press navigation cost lives in Valve's grid JS (see spike report), untouched by this change.

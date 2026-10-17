@@ -7,10 +7,12 @@ file="$1"
 # `git commit -v` appends commented template lines and the diff itself after a
 # scissors marker; a Refs line in either must not satisfy the check. Only the
 # lines that will become the message are examined.
-body=$(grep -v '^#' "$file" | sed '/^-- >8 --$/,$d')
+body=$(sed '/^# ------------------------ >8 ------------------------$/,$d; /^-- >8 --$/,$d' "$file" | grep -v '^#')
 subject=$(printf '%s\n' "$body" | head -n 1)
 case "$subject" in
-    Merge\ *) exit 0 ;;
+    Merge\ *)
+        if git rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1; then exit 0; fi
+        ;;
 esac
 echo "$subject" | grep -Eq '^(feat|fix|refactor|chore|docs|test|release)(\([^)]+\))?: .+' || {
     echo "commit rejected: subject must be 'type[(scope)]: imperative summary'" >&2
