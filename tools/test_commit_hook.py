@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The commit-msg hook accepts tied commits and rejects untied ones
 (tools/githooks/commit-msg, installed by tools/install-hooks.sh)."""
+import os
+from unittest.mock import patch
 import subprocess
 import tempfile
 import unittest
@@ -22,6 +24,37 @@ def verdict(message, merge=False):
 
 
 class CommitHookTests(unittest.TestCase):
+    def setUp(self):
+        config = patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': os.devnull,
+                                        'GIT_CONFIG_NOSYSTEM': '1'})
+        config.start(); self.addCleanup(config.stop)
+
+    def test_leading_blanks_are_cleaned_before_subject(self):
+        self.assertEqual(verdict('# template\n\n  \ndocs: notes\n\nRefs #8\n'), 0)
+
+    def test_installer_preserves_existing_custom_hooks(self):
+        with tempfile.TemporaryDirectory(prefix='wispos-existing-hook-') as root:
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            subprocess.run(['git', 'config', 'core.hooksPath', 'existing-hooks'],
+                           cwd=root, check=True)
+            result = subprocess.run(['sh', str(HERE / 'install-hooks.sh')],
+                                    cwd=root, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            actual = subprocess.check_output(['git', 'config', 'core.hooksPath'],
+                                             cwd=root, text=True).strip()
+            self.assertEqual(actual, 'existing-hooks')
+
+    def test_installer_preserves_existing_default_hooks(self):
+        with tempfile.TemporaryDirectory(prefix='wispos-default-hook-') as root:
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            hook = Path(root) / '.git/hooks/pre-commit'
+            hook.write_text('#!/bin/sh\nexit 0\n'); hook.chmod(0o755)
+            result = subprocess.run(['sh', str(HERE / 'install-hooks.sh')],
+                                    cwd=root, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(subprocess.run(['git', 'config', '--get', 'core.hooksPath'],
+                                            cwd=root, capture_output=True).returncode, 1)
+
     def test_feat_with_refs_passes(self):
         self.assertEqual(verdict('feat: wisp sudo, no password\n\nRefs #8\n'), 0)
 

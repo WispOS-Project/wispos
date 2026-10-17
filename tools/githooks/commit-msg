@@ -7,7 +7,7 @@ file="$1"
 # `git commit -v` appends commented template lines and the diff itself after a
 # scissors marker; a Refs line in either must not satisfy the check. Only the
 # lines that will become the message are examined.
-body=$(sed '/^# ------------------------ >8 ------------------------$/,$d; /^-- >8 --$/,$d' "$file" | grep -v '^#')
+body=$(sed '/^# ------------------------ >8 ------------------------$/,$d; /^-- >8 --$/,$d' "$file" | grep -v '^#' | sed '/[^[:space:]]/,$!d')
 subject=$(printf '%s\n' "$body" | head -n 1)
 case "$subject" in
     Merge\ *)

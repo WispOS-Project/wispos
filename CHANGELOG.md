@@ -6,7 +6,7 @@ policy in `AGENTS.md`.
 
 ## [Unreleased]
 
-- **Commit validation bypasses repaired (tooling fix, PATCH; #27):** ignore Git’s verbose diff after the real scissors boundary, exempt merge subjects only during a merge, and scope hook installation to its worktree. Three regression tests failed before the fixes and pass afterward. No appliance runtime change.
+- **Commit validation bypasses repaired (tooling fix, PATCH; #27):** ignore Git’s verbose diff after the real scissors boundary, exempt merge subjects only during a merge, and scope hook installation to its worktree. Six regression tests failed before the fixes and pass afterward. The installer also preserves existing hook suites by refusing replacement, and message validation handles leading blank lines. No appliance runtime change.
 
 - **Direct development and release workflow (documentation; no runtime SemVer change; #27):** document one canonical code checkout for both image variants, contributor PRs, verification, and signed dev updates. Add the commit-message hook and installer for contributor clones.
 
