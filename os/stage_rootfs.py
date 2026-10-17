@@ -300,6 +300,10 @@ def install_sudo(tree, debs_dir, lock_path=None):
     (sudoers_d / 'wisp').write_text(SUDOERS_WISP); (sudoers_d / 'wisp').chmod(0o440)
     pam_d = tree / 'etc/pam.d'; pam_d.mkdir(parents=True, exist_ok=True)
     (pam_d / 'sudo').write_text(PAM_SUDO); (pam_d / 'sudo').chmod(0o644)
+    # The login shell uses the separate sudo-i service (WispOS-Project/wispos#23):
+    # the package's retained stack (pam_limits, pam_env, Debian common-*) is
+    # not installed, so it gets the same permit-only policy, not the package file.
+    (pam_d / 'sudo-i').write_text(PAM_SUDO); (pam_d / 'sudo-i').chmod(0o644)
     (tree / 'usr/bin/sudo').chmod(0o4755)
 
 

@@ -80,6 +80,10 @@ class SudoInstallTests(unittest.TestCase):
             pam = tree / 'etc/pam.d/sudo'
             self.assertEqual(pam.read_text(), stage_rootfs.PAM_SUDO)
             self.assertIn('pam_permit', pam.read_text())
+            # login shells use the separate sudo-i service (#23): same
+            # permit-only policy, never the package's unusable stack
+            login = tree / 'etc/pam.d/sudo-i'
+            self.assertEqual(login.read_text(), stage_rootfs.PAM_SUDO)
             self.assertTrue((tree / 'usr/libexec/sudo/sudoers.so').is_file())
             # libraries flatten into usr/lib; the used module stays on its path
             self.assertTrue((tree / 'usr/lib/libpam.so.0.85.1').is_file())
