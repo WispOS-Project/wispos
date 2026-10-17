@@ -89,6 +89,11 @@ class CommitHookTests(unittest.TestCase):
             self.assertEqual(subprocess.run(['git', 'config', '--get', 'core.hooksPath'],
                                             cwd=sibling, capture_output=True).returncode, 1)
 
+    def test_invalid_issue_references_are_rejected(self):
+        for footer in ('Refs #0', 'NoRefs #123', 'Refs #12suffix'):
+            with self.subTest(footer=footer):
+                self.assertEqual(verdict('docs: notes\n\n' + footer + '\n'), 1)
+
     def test_missing_issue_link_is_rejected(self):
         self.assertEqual(verdict('fix: heal the dirty bit\n'), 1)
 

@@ -58,3 +58,5 @@ to the maintainer.
 
 Known tooling follow-up: amending a merge may require a conventional issue-linked
 message because no active merge state is present; see issue #29.
+The validator currently assumes Git’s default comment character; custom/automatic
+comment characters are tracked in issue #30.

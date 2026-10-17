@@ -19,7 +19,7 @@ echo "$subject" | grep -Eq '^(feat|fix|refactor|chore|docs|test|release)(\([^)]+
     echo "  types: feat fix refactor chore docs test release" >&2
     exit 1
 }
-printf '%s\n' "$body" | grep -Eq '(Refs|Fixes|Closes|Resolves) #[0-9]+' || {
+printf '%s\n' "$body" | grep -Eq '^(Refs|Fixes|Closes|Resolves) #[1-9][0-9]*[[:space:]]*$' || {
     echo "commit rejected: no issue link (need 'Refs #N', or 'Fixes/Closes/Resolves #N' to close it on merge)" >&2
     exit 1
 }
