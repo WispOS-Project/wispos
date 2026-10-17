@@ -1,0 +1,23 @@
+#!/bin/sh
+# commit-msg hook: every commit is tied to a GitHub issue, in the subject
+# style the project already uses. Installed by tools/install-hooks.sh
+# (git config core.hooksPath tools/githooks). Merge commits are exempt:
+# GitHub writes those, not us. Anything else rejected explains itself.
+file="$1"
+# `git commit -v` appends commented template lines and the diff itself after a
+# scissors marker; a Refs line in either must not satisfy the check. Only the
+# lines that will become the message are examined.
+body=$(grep -v '^#' "$file" | sed '/^-- >8 --$/,$d')
+subject=$(printf '%s\n' "$body" | head -n 1)
+case "$subject" in
+    Merge\ *) exit 0 ;;
+esac
+echo "$subject" | grep -Eq '^(feat|fix|refactor|chore|docs|test|release)(\([^)]+\))?: .+' || {
+    echo "commit rejected: subject must be 'type[(scope)]: imperative summary'" >&2
+    echo "  types: feat fix refactor chore docs test release" >&2
+    exit 1
+}
+printf '%s\n' "$body" | grep -Eq '(Refs|Fixes|Closes|Resolves) #[0-9]+' || {
+    echo "commit rejected: no issue link (need 'Refs #N', or 'Fixes/Closes/Resolves #N' to close it on merge)" >&2
+    exit 1
+}

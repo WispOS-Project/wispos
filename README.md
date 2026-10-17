@@ -45,3 +45,9 @@ every image trusts.
 ## Licence
 MIT, see `LICENSE` (copyright 2026 Daxiongmao87). Third-party material keeps its own terms: the SteamOS interface definitions in `os/steamos/interfaces/` are MIT-licensed by their
 authors (the notices are in the files), and the OS image built from this repository contains many other projects under their own licences.
+
+## Development and releases
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the direct branch/PR workflow and both
+image variants, and [the release guide](docs/RELEASING.md) for candidate verification
+and signed dev/stable updates. All product and developer-tool changes belong here.
