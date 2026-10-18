@@ -6,6 +6,8 @@ policy in `AGENTS.md`.
 
 ## [Unreleased]
 
+- **Commit subject validated without shell escape expansion (tooling fix, PATCH; #27):** the commit-msg hook piped the subject through `echo`, and where `/bin/sh` is dash `echo` expands backslash escapes before `grep` sees the text, so a literal subject such as `docs\072 forged` passed the shape check as `docs: forged` while Git stored the nonconforming bytes; `\n` in a subject could likewise smuggle a matching second line. The check now uses `printf '%s\n'`. Two regression cases fail against the previous hook and pass unchanged after the fix (suite: 20/20). Found in review on the workflow repository; the same hook ships in both trees. No appliance runtime change.
+
 - **Commit validation bypasses repaired (tooling fix, PATCH; #27):** ignore Git’s verbose diff after the real scissors boundary, exempt merge subjects only during a merge, and scope hook installation to its worktree. Seven regression tests failed before the fixes and pass afterward. The installer also preserves existing hook suites by refusing replacement, and message validation handles leading blank lines. Issue footers require a standalone keyword and positive number. No appliance runtime change.
 
 - **Direct development and release workflow (documentation; no runtime SemVer change; #27):** document one canonical code checkout for both image variants, contributor PRs, verification, and signed dev updates. Add the commit-message hook and installer for contributor clones.

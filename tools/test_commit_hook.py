@@ -103,6 +103,14 @@ class CommitHookTests(unittest.TestCase):
     def test_wrong_subject_shape_is_rejected(self):
         self.assertEqual(verdict('WIP stuff\n\nRefs #8\n'), 1)
 
+    def test_octal_escape_subject_is_not_expanded_before_validation(self):
+        # On dash, `echo` turns \072 into ':' before grep sees it, which let the
+        # nonconforming literal subject 'docs\072 forged' pass the shape check.
+        self.assertEqual(verdict('docs\\072 forged\n\nRefs #8\n'), 1)
+
+    def test_newline_escape_subject_cannot_smuggle_a_second_line(self):
+        self.assertEqual(verdict('feat\\ntest: smuggled\n\nRefs #8\n'), 1)
+
     def test_installer_points_at_the_hooks_dir(self):
         with tempfile.TemporaryDirectory(prefix='wispos-repo-') as root:
             subprocess.run(['git', 'init', '-q', str(root)], check=True)

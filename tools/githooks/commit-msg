@@ -14,7 +14,10 @@ case "$subject" in
         if git rev-parse --verify -q MERGE_HEAD >/dev/null 2>&1; then exit 0; fi
         ;;
 esac
-echo "$subject" | grep -Eq '^(feat|fix|refactor|chore|docs|test|release)(\([^)]+\))?: .+' || {
+# printf, never echo: where /bin/sh is dash, echo expands backslash escapes
+# before grep sees the subject, so 'docs\072 forged' would pass as 'docs: forged'
+# while Git stores the nonconforming literal text.
+printf '%s\n' "$subject" | grep -Eq '^(feat|fix|refactor|chore|docs|test|release)(\([^)]+\))?: .+' || {
     echo "commit rejected: subject must be 'type[(scope)]: imperative summary'" >&2
     echo "  types: feat fix refactor chore docs test release" >&2
     exit 1
