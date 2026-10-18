@@ -11,6 +11,16 @@ file="$1"
 # comment-shaped first line passes as a conforming subject while the commit's
 # real subject is the comment. `commit.cleanup` overrides the default, and no
 # editor ran when Git hands us GIT_EDITOR=: (probe-cleanup-modes.sh).
+#
+# KNOWN LIMITATION, accepted deliberately: `GIT_EDITOR=:` is the only signal this
+# hook has for "no editor ran", and a `--cleanup` given on the command line is
+# invisible here (git exports no variable naming it). Both were measured on git
+# 2.43, where git sets `:` for every no-editor form and overwrites a caller's own
+# GIT_EDITOR, so the common paths are exact; a future git that skips the editor
+# without setting `:`, or an explicit `--cleanup=whitespace -e`, would still let a
+# comment-shaped subject through. Nothing inside commit-msg can close that,
+# because the hook never sees the stored message: the enforceable check is a
+# ref or push boundary reading `git log --format=%B` (#31).
 cleanup=$(git config --get commit.cleanup 2>/dev/null || true)
 # git validates commit.cleanup itself, so only these five values reach the hook;
 # an unset strip_comments means "treat the text as content", which fails closed.
