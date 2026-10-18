@@ -4,3 +4,15 @@ __pycache__/
 /out/
 *.img
 *.img.gz
+
+# Local agent configuration and state are not product source.
+AGENTS.md
+CLAUDE.md
+.omp/
+.agents/
+.claude/
+.codex/
+.qwen/
+.env
+.env.*
+!.env.example
