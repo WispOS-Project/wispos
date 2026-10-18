@@ -4,10 +4,28 @@
 # (git config core.hooksPath tools/githooks). Merge commits are exempt:
 # GitHub writes those, not us. Anything else rejected explains itself.
 file="$1"
+# Git drops comment lines only when the effective cleanup mode is `strip`, and
+# the default depends on how the message arrived: `git commit -m` and `-F` never
+# open an editor and default to `whitespace`, which keeps them. Stripping in
+# that case makes the hook judge a different message than Git stores, so a
+# comment-shaped first line passes as a conforming subject while the commit's
+# real subject is the comment. `commit.cleanup` overrides the default, and no
+# editor ran when Git hands us GIT_EDITOR=: (probe-cleanup-modes.sh).
+cleanup=$(git config --get commit.cleanup 2>/dev/null || true)
+case "$cleanup" in
+    strip) strip_comments=1 ;;
+    whitespace|verbatim) strip_comments=0 ;;
+    *) if [ "${GIT_EDITOR:-}" = ":" ]; then strip_comments=0; else strip_comments=1; fi ;;
+esac
 # `git commit -v` appends commented template lines and the diff itself after a
 # scissors marker; a Refs line in either must not satisfy the check. Only the
 # lines that will become the message are examined.
-body=$(sed '/^# ------------------------ >8 ------------------------$/,$d; /^-- >8 --$/,$d' "$file" | grep -v '^#' | sed '/[^[:space:]]/,$!d')
+scissors='/^# ------------------------ >8 ------------------------$/,$d; /^-- >8 --$/,$d'
+if [ "$strip_comments" = 1 ]; then
+    body=$(sed "$scissors" "$file" | grep -v '^#' | sed '/[^[:space:]]/,$!d')
+else
+    body=$(sed "$scissors" "$file" | sed '/[^[:space:]]/,$!d')
+fi
 subject=$(printf '%s\n' "$body" | head -n 1)
 case "$subject" in
     Merge\ *)

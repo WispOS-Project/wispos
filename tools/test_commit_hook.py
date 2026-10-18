@@ -176,6 +176,89 @@ class CommitHookTests(unittest.TestCase):
                'docs: notes\n\nRefs #8\n')
         self.assertEqual(verdict(msg), 0)
 
+    def commit_verdict(self, args, editor_seed=None, cleanup=None):
+        """Run a real `git commit` with the shipped hook installed.
+
+        The hook must validate what Git will store, which depends on the
+        effective cleanup mode; feeding the hook a file cannot show that.
+        Returns (exit code, stored subject or '').
+        """
+        with tempfile.TemporaryDirectory(prefix='wispos-commit-') as root:
+            root, repo = Path(root), Path(root) / 'repo'
+            env = dict(os.environ)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=env)
+            subprocess.run(['git', 'config', 'core.hooksPath', str(HOOK.parent)],
+                           cwd=repo, check=True, env=env)
+            if cleanup:
+                subprocess.run(['git', 'config', 'commit.cleanup', cleanup],
+                               cwd=repo, check=True, env=env)
+            (repo / 'f.txt').write_text('x\n')
+            subprocess.run(['git', 'add', 'f.txt'], cwd=repo, check=True, env=env)
+            if editor_seed is not None:
+                seed = root / 'seed.txt'
+                seed.write_text(editor_seed)
+                ed = root / 'ed.sh'
+                ed.write_text(f'#!/bin/sh\ncp "{seed}" "$1"\n')
+                ed.chmod(0o755)
+                env['GIT_EDITOR'] = str(ed)          # a real editor: not ':'
+            r = subprocess.run(['git', '-c', 'user.name=T', '-c',
+                                'user.email=t@example.com', 'commit', '-q'] + list(args),
+                               cwd=repo, capture_output=True, text=True, env=env)
+            subject = subprocess.run(['git', '-c', 'user.name=T', '-c',
+                                      'user.email=t@example.com', 'log', '-1', '--format=%s'],
+                                     cwd=repo, capture_output=True, text=True,
+                                     env=env).stdout.strip() if r.returncode == 0 else ''
+            return r.returncode, subject
+
+    def test_no_editor_commit_rejects_comment_shaped_subject(self):
+        # `git commit -m` keeps '#' lines (cleanup whitespace), so that comment is
+        # the real subject and the conforming second line is not what Git stores.
+        rc, subject = self.commit_verdict(
+            ['-m', '# forged subject', '-m', 'docs: notes', '-m', 'Refs #8'])
+        self.assertNotEqual(rc, 0, f'fail-open: committed with subject {subject!r}')
+        self.assertEqual(subject, '')
+
+    def test_explicit_strip_cleanup_still_accepts_commented_message(self):
+        # With cleanup=strip Git does drop the comment, so accepting is correct.
+        rc, subject = self.commit_verdict(
+            ['-m', '# forged subject', '-m', 'docs: notes', '-m', 'Refs #8'],
+            cleanup='strip')
+        self.assertEqual(rc, 0)
+        self.assertEqual(subject, 'docs: notes')
+
+    def test_editor_commit_strips_template_comment(self):
+        rc, subject = self.commit_verdict(['-e'],
+                                          editor_seed='# WIP stuff\ndocs: notes\n\nRefs #8\n')
+        self.assertEqual(rc, 0)
+        self.assertEqual(subject, 'docs: notes')
+
+    def test_installer_migrates_a_shared_hooks_path(self):
+        # A shared core.hooksPath left by the earlier installer is invisible to a
+        # plain --get once worktree config exists, and siblings inherit it.
+        with tempfile.TemporaryDirectory(prefix='wispos-migrate-') as root:
+            root, repo = Path(root), Path(root) / 'repo'
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            subprocess.run(['git', 'config', 'core.hooksPath', 'tools/githooks'],
+                           cwd=repo, check=True)
+            subprocess.run(['git', '-c', 'user.name=T', '-c', 'user.email=t@example.com',
+                            'commit', '-q', '--allow-empty', '-m', 'seed'],
+                           cwd=repo, check=True)
+            pre = root / 'pre'
+            subprocess.run(['git', '-c', 'user.name=T', '-c', 'user.email=t@example.com',
+                            'worktree', 'add', '-q', '--detach', str(pre)],
+                           cwd=repo, check=True)
+            subprocess.run(['sh', str(HERE / 'install-hooks.sh')], cwd=repo,
+                           check=True, capture_output=True, text=True)
+            self.assertEqual(subprocess.run(
+                ['git', 'config', '--local', '--get', 'core.hooksPath'],
+                cwd=repo, capture_output=True, text=True).stdout.strip(), '')
+            self.assertEqual(subprocess.run(
+                ['git', 'config', '--worktree', '--get', 'core.hooksPath'],
+                cwd=repo, capture_output=True, text=True).stdout.strip(), 'tools/githooks')
+            self.assertEqual(subprocess.run(
+                ['git', 'config', '--get', 'core.hooksPath'],
+                cwd=pre, capture_output=True, text=True).stdout.strip(), '')
+
 
 if __name__ == '__main__':
     unittest.main()
