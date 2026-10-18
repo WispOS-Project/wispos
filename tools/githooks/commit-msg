@@ -32,7 +32,7 @@ if [ "${GIT_EDITOR:-}" = ":" ]; then edited=0; else edited=1; fi
 # itself appended a verbose template) and whether it removes comment lines (the
 # cleanup mode, which `strip` also does under `-m`). A `Refs` line below either
 # dropped section must not satisfy the issue-link check.
-scissors='/^# ------------------------ >8 ------------------------$/,$d; /^-- >8 --$/,$d'
+scissors='/^# ------------------------ >8 ------------------------$/,$d'
 if [ "$edited" = 1 ]; then body=$(sed "$scissors" "$file"); else body=$(cat "$file"); fi
 if [ "$strip_comments" = 1 ]; then body=$(printf '%s\n' "$body" | grep -v '^#'); fi
 body=$(printf '%s\n' "$body" | sed '/[^[:space:]]/,$!d')
@@ -44,8 +44,10 @@ case "$subject" in
 esac
 # printf, never echo: where /bin/sh is dash, echo expands backslash escapes
 # before grep sees the subject, so 'docs\072 forged' would pass as 'docs: forged'
-# while Git stores the nonconforming literal text.
-printf '%s\n' "$subject" | grep -Eq '^(feat|fix|refactor|chore|docs|test|release)(\([^)]+\))?: .+' || {
+# while Git stores the nonconforming literal text. The summary must start with a
+# non-space character: under `cleanup=verbatim` Git keeps trailing whitespace, so
+# `: .+` would let 'docs:  ' pass with no summary at all.
+printf '%s\n' "$subject" | grep -Eq '^(feat|fix|refactor|chore|docs|test|release)(\([^)]+\))?: [^[:space:]]' || {
     echo "commit rejected: subject must be 'type[(scope)]: imperative summary'" >&2
     echo "  types: feat fix refactor chore docs test release" >&2
     exit 1

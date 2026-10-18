@@ -249,6 +249,17 @@ class CommitHookTests(unittest.TestCase):
         self.assertEqual(rc, 0, f'rejected a message Git keeps whole: {subject!r}')
         self.assertEqual(subject, 'docs: notes')
 
+    def test_bare_scissor_text_does_not_truncate_the_message(self):
+        # Git's own scissor line carries the comment char and 24 dashes on each
+        # side; a bare `-- >8 --` is ordinary text Git stores, so it must not
+        # truncate the message and swallow the footer below it.
+        self.assertEqual(verdict('docs: notes\n-- >8 --\n\nRefs #8\n'), 0)
+
+    def test_whitespace_only_summary_is_rejected(self):
+        # `: .+` accepted 'docs:  ' because the summary could be all spaces, and
+        # cleanup=verbatim keeps that whitespace in the stored commit.
+        self.assertEqual(verdict('docs:  \n\nRefs #8\n'), 1)
+
     def test_installer_migrates_a_shared_hooks_path(self):
         # A shared core.hooksPath left by the earlier installer is invisible to a
         # plain --get once worktree config exists, and siblings inherit it.
