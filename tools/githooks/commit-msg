@@ -21,15 +21,21 @@ case "$cleanup" in
     verbatim|whitespace|scissors) strip_comments=0 ;;
     ""|default) if [ "${GIT_EDITOR:-}" = ":" ]; then strip_comments=0; else strip_comments=1; fi ;;
 esac
-# `git commit -v` appends commented template lines and the diff itself after a
-# scissors marker; a Refs line in either must not satisfy the check. Only the
-# lines that will become the message are examined.
+# Git only appends a verbose template (comment lines plus a diff after a scissor
+# marker) when it opens an editor, and it truncates there too. Under `-m`/`-F`
+# such a marker is ordinary text that Git stores, so cutting on it would drop a
+# real footer and reject a valid commit - verified against `commit.cleanup` set to
+# scissors both by config and by CLI flag: the message was stored whole.
+if [ "${GIT_EDITOR:-}" = ":" ]; then edited=0; else edited=1; fi
+# Two separate questions, and collapsing them breaks one while fixing the other:
+# whether Git truncates at the scissor marker (only in the edited path, where Git
+# itself appended a verbose template) and whether it removes comment lines (the
+# cleanup mode, which `strip` also does under `-m`). A `Refs` line below either
+# dropped section must not satisfy the issue-link check.
 scissors='/^# ------------------------ >8 ------------------------$/,$d; /^-- >8 --$/,$d'
-if [ "$strip_comments" = 1 ]; then
-    body=$(sed "$scissors" "$file" | grep -v '^#' | sed '/[^[:space:]]/,$!d')
-else
-    body=$(sed "$scissors" "$file" | sed '/[^[:space:]]/,$!d')
-fi
+if [ "$edited" = 1 ]; then body=$(sed "$scissors" "$file"); else body=$(cat "$file"); fi
+if [ "$strip_comments" = 1 ]; then body=$(printf '%s\n' "$body" | grep -v '^#'); fi
+body=$(printf '%s\n' "$body" | sed '/[^[:space:]]/,$!d')
 subject=$(printf '%s\n' "$body" | head -n 1)
 case "$subject" in
     Merge\ *)

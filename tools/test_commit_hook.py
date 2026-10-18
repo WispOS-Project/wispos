@@ -241,6 +241,14 @@ class CommitHookTests(unittest.TestCase):
         self.assertNotEqual(rc, 0, f'fail-open under scissors cleanup: {subject!r}')
         self.assertEqual(subject, '')
 
+    def test_scissor_marker_as_content_does_not_reject(self):
+        # Under the no-editor default Git stores `-- >8 --` as ordinary text, so
+        # cutting there would drop the real footer and reject a valid commit.
+        rc, subject = self.commit_verdict(
+            ['-m', 'docs: notes', '-m', '-- >8 --', '-m', 'Refs #8'])
+        self.assertEqual(rc, 0, f'rejected a message Git keeps whole: {subject!r}')
+        self.assertEqual(subject, 'docs: notes')
+
     def test_installer_migrates_a_shared_hooks_path(self):
         # A shared core.hooksPath left by the earlier installer is invisible to a
         # plain --get once worktree config exists, and siblings inherit it.
