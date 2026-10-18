@@ -58,5 +58,5 @@ to the maintainer.
 
 Known tooling follow-up: amending a merge may require a conventional issue-linked
 message because no active merge state is present; see issue #29.
-The validator currently assumes Git’s default comment character; custom/automatic
-comment characters are tracked in issue #30.
+The validator follows `core.commentChar` for both comment removal and the scissor
+line; `auto` is handled by the safe rule recorded in issue #30.

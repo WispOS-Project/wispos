@@ -11,6 +11,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / 'githooks' / 'commit-msg'
+# Git's own scissor line: the comment character, a space, 24 dashes, ' >8 ',
+# 24 dashes. Only THIS form truncates; a bare `-- >8 --` is stored as content.
+SCISSOR = '------------------------ >8 ------------------------'
 
 
 def verdict(message, merge=False):
@@ -176,11 +179,15 @@ class CommitHookTests(unittest.TestCase):
                'docs: notes\n\nRefs #8\n')
         self.assertEqual(verdict(msg), 0)
 
-    def commit_verdict(self, args, editor_seed=None, cleanup=None):
+    def commit_verdict(self, args, editor_seed=None, cleanup=None, comment_char=None,
+                       editor_append=None, editor_subject=None):
         """Run a real `git commit` with the shipped hook installed.
 
         The hook must validate what Git will store, which depends on the
-        effective cleanup mode; feeding the hook a file cannot show that.
+        effective cleanup mode AND on the effective comment character; feeding
+        the hook a file cannot show either. `editor_append` adds text to the
+        template Git itself wrote, so a footer lands below Git's own scissor
+        line instead of an imitation of one.
         Returns (exit code, stored subject or '').
         """
         with tempfile.TemporaryDirectory(prefix='wispos-commit-') as root:
@@ -192,18 +199,40 @@ class CommitHookTests(unittest.TestCase):
             if cleanup:
                 subprocess.run(['git', 'config', 'commit.cleanup', cleanup],
                                cwd=repo, check=True, env=env)
+            if comment_char:
+                subprocess.run(['git', 'config', 'core.commentChar', comment_char],
+                               cwd=repo, check=True, env=env)
             (repo / 'f.txt').write_text('x\n')
             subprocess.run(['git', 'add', 'f.txt'], cwd=repo, check=True, env=env)
-            if editor_seed is not None:
-                seed = root / 'seed.txt'
-                seed.write_text(editor_seed)
+            if editor_seed is not None or editor_append is not None or \
+                    editor_subject is not None:
+                lines = ['#!/bin/sh']
+                if editor_subject is not None:
+                    # Keep Git's own template (its comment lines and its scissor
+                    # line) and put a real subject above it, so an appended footer
+                    # falls below the marker Git writes rather than replacing it.
+                    subj = root / 'subject.txt'
+                    subj.write_text(editor_subject)
+                    lines.append('{ cat "%s"; cat "$1"; } > "$1.new"' % subj)
+                    lines.append('mv "$1.new" "$1"')
+                if editor_seed is not None:
+                    seed = root / 'seed.txt'
+                    seed.write_text(editor_seed)
+                    lines.append(f'cp "{seed}" "$1"')
+                if editor_append is not None:
+                    # Land after Git's own scissor line, in the region Git cuts away.
+                    app = root / 'append.txt'
+                    app.write_text(editor_append)
+                    lines.append(f'printf "\\n" >> "$1"')
+                    lines.append(f'cat "{app}" >> "$1"')
                 ed = root / 'ed.sh'
-                ed.write_text(f'#!/bin/sh\ncp "{seed}" "$1"\n')
+                ed.write_text('\n'.join(lines) + '\n')
                 ed.chmod(0o755)
                 env['GIT_EDITOR'] = str(ed)          # a real editor: not ':'
             r = subprocess.run(['git', '-c', 'user.name=T', '-c',
                                 'user.email=t@example.com', 'commit', '-q'] + list(args),
-                               cwd=repo, capture_output=True, text=True, env=env)
+                               cwd=repo, capture_output=True, text=True, env=env,
+                               stdin=subprocess.DEVNULL)
             subject = subprocess.run(['git', '-c', 'user.name=T', '-c',
                                       'user.email=t@example.com', 'log', '-1', '--format=%s'],
                                      cwd=repo, capture_output=True, text=True,
@@ -259,6 +288,90 @@ class CommitHookTests(unittest.TestCase):
         # `: .+` accepted 'docs:  ' because the summary could be all spaces, and
         # cleanup=verbatim keeps that whitespace in the stored commit.
         self.assertEqual(verdict('docs:  \n\nRefs #8\n'), 1)
+
+    def test_scissor_line_of_the_configured_character_truncates(self):
+        # Git writes its scissor line with the comment character. Under
+        # core.commentChar=';' the line it appends is ';' + marker, and a footer
+        # below it is text Git discards. Anchoring the cut on '#' counted it (#30).
+        rc, subject = self.commit_verdict(['-e', '-v'], cleanup='scissors',
+                                          comment_char=';',
+                                          editor_subject='docs: notes\n',
+                                          editor_append='Refs #99\n')
+        self.assertNotEqual(rc, 0, f'fail-open: Git stored no footer for {subject!r}')
+        self.assertEqual(subject, '')
+
+    def test_scissor_line_of_the_bang_character_truncates(self):
+        rc, subject = self.commit_verdict(['-e', '-v'], cleanup='scissors',
+                                          comment_char='!',
+                                          editor_subject='docs: notes\n',
+                                          editor_append='Refs #99\n')
+        self.assertNotEqual(rc, 0, f'fail-open: Git stored no footer for {subject!r}')
+        self.assertEqual(subject, '')
+
+    def test_control_default_character_scissor_line_still_truncates(self):
+        # Same shape with the default '#', which the hook already handled: proves
+        # the two cases above differ only in the comment character.
+        rc, subject = self.commit_verdict(['-e', '-v'], cleanup='scissors',
+                                          editor_subject='docs: notes\n',
+                                          editor_append='Refs #99\n')
+        self.assertNotEqual(rc, 0, f'fail-open: Git stored no footer for {subject!r}')
+
+    def test_control_tied_commit_under_a_custom_character_still_passes(self):
+        # A footer Git really stores must not be rejected by the new cut.
+        rc, subject = self.commit_verdict(['-e', '-v'], cleanup='scissors',
+                                          comment_char=';',
+                                          editor_subject='docs: notes\n\nRefs #8\n')
+        self.assertEqual(rc, 0, 'falsely rejected a tied commit')
+        self.assertEqual(subject, 'docs: notes')
+
+    def test_scissor_line_of_another_character_is_content_and_keeps_the_footer(self):
+        # Git truncates only at its OWN marker, so under commentChar=';' a
+        # '#'-prefixed marker line is ordinary text and the footer below it is
+        # stored. A cut that ignores the character rejects a valid commit.
+        rc, subject = self.commit_verdict(
+            ['-e'], cleanup='scissors', comment_char=';',
+            editor_seed='docs: notes\n\n# ' + SCISSOR + '\nRefs #99\n')
+        self.assertEqual(rc, 0, 'falsely rejected: Git keeps that footer')
+        self.assertEqual(subject, 'docs: notes')
+
+    def test_strip_removes_the_configured_character_not_the_default_hash(self):
+        # With commentChar=';' a '#'-prefixed line is content, and Git stores it as
+        # the subject. Stripping '#' as a comment made the hook judge a different
+        # message than Git keeps, passing a nonconforming subject (#30).
+        rc, subject = self.commit_verdict(
+            ['-m', '# forged subject', '-m', 'docs: notes', '-m', 'Refs #8'],
+            comment_char=';', cleanup='strip')
+        self.assertNotEqual(rc, 0, f'fail-open: Git stored subject {subject!r}')
+        self.assertEqual(subject, '')
+
+    def test_auto_without_editor_has_no_comment_character_at_all(self):
+        # Git resolves `auto` only while writing the editor template
+        # (adjust_comment_line_char, builtin/commit.c), so under -m it strips
+        # nothing: the '#'-prefixed line IS the stored subject (#30).
+        rc, subject = self.commit_verdict(
+            ['-m', '# forged subject', '-m', 'docs: notes', '-m', 'Refs #8'],
+            comment_char='auto', cleanup='strip')
+        self.assertNotEqual(rc, 0, f'fail-open: Git stored subject {subject!r}')
+        self.assertEqual(subject, '')
+
+    def test_auto_uses_the_character_git_wrote_into_its_template(self):
+        # A pre-editor message line starting with '#' makes auto escalate to the
+        # next candidate; Git then writes its scissor line with ';'. The appended
+        # footer sits below it, so Git discards it and the commit is untied.
+        rc, subject = self.commit_verdict(
+            ['-e', '-v', '-m', '# occupies the default character'],
+            cleanup='scissors', comment_char='auto',
+            editor_subject='docs: notes\n', editor_append='Refs #99\n')
+        self.assertNotEqual(rc, 0, f'fail-open: Git stored no footer for {subject!r}')
+
+    def test_auto_that_kept_the_hash_character_still_truncates(self):
+        # Control for the case above: with nothing occupying '#', auto resolves to
+        # '#', so the '#' marker is Git's own and the footer below it is discarded.
+        rc, subject = self.commit_verdict(['-e', '-v'], cleanup='scissors',
+                                          comment_char='auto',
+                                          editor_subject='docs: notes\n',
+                                          editor_append='Refs #99\n')
+        self.assertNotEqual(rc, 0, f'fail-open: Git stored no footer for {subject!r}')
 
     def test_installer_migrates_a_shared_hooks_path(self):
         # A shared core.hooksPath left by the earlier installer is invisible to a
