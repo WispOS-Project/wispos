@@ -3,6 +3,7 @@
 (tools/githooks/commit-msg, installed by tools/install-hooks.sh)."""
 import os
 from unittest.mock import patch
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -110,6 +111,38 @@ class CommitHookTests(unittest.TestCase):
 
     def test_newline_escape_subject_cannot_smuggle_a_second_line(self):
         self.assertEqual(verdict('feat\\ntest: smuggled\n\nRefs #8\n'), 1)
+
+    def test_installer_allows_empty_or_missing_hooks_dir(self):
+        # Review raised this as an unexpanded-glob accident. POSIX leaves an
+        # unmatched glob literal, so the -f/-x guard simply sees no file; these
+        # cases are specified behavior, and this pins it against future edits.
+        for label in ('empty', 'missing'):
+            with self.subTest(hooks_dir=label), tempfile.TemporaryDirectory(
+                    prefix='wispos-hooks-') as root:
+                subprocess.run(['git', 'init', '-q', root], check=True)
+                hooks = Path(root) / '.git' / 'hooks'
+                if label == 'missing':
+                    shutil.rmtree(hooks)
+                else:
+                    for p in hooks.iterdir():
+                        shutil.rmtree(p) if p.is_dir() else p.unlink()
+                self.assertEqual(hooks.exists(), label == 'empty')
+                result = subprocess.run(['sh', str(HERE / 'install-hooks.sh')],
+                                        cwd=root, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(subprocess.run(['git', 'config', '--get', 'core.hooksPath'],
+                                                cwd=root, capture_output=True,
+                                                text=True).stdout.strip(), 'tools/githooks')
+
+    def test_installer_ignores_non_executable_stray_file_in_hooks(self):
+        # The guard refuses only an executable regular file; a plain leftover
+        # file must not block installation.
+        with tempfile.TemporaryDirectory(prefix='wispos-stray-') as root:
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            (Path(root) / '.git' / 'hooks' / 'notes').write_text('not a hook\n')
+            result = subprocess.run(['sh', str(HERE / 'install-hooks.sh')],
+                                    cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_installer_points_at_the_hooks_dir(self):
         with tempfile.TemporaryDirectory(prefix='wispos-repo-') as root:
