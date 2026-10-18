@@ -232,6 +232,15 @@ class CommitHookTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(subject, 'docs: notes')
 
+    def test_scissors_cleanup_keeps_comment_subject_like_whitespace(self):
+        # commit.cleanup=scissors truncates at the scissor line but does NOT strip
+        # comments, so an editor run still stores the comment as the subject.
+        rc, subject = self.commit_verdict(
+            ['-e'], cleanup='scissors',
+            editor_seed='# forged subject\ndocs: notes\n\nRefs #8\n')
+        self.assertNotEqual(rc, 0, f'fail-open under scissors cleanup: {subject!r}')
+        self.assertEqual(subject, '')
+
     def test_installer_migrates_a_shared_hooks_path(self):
         # A shared core.hooksPath left by the earlier installer is invisible to a
         # plain --get once worktree config exists, and siblings inherit it.

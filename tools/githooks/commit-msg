@@ -12,10 +12,14 @@ file="$1"
 # real subject is the comment. `commit.cleanup` overrides the default, and no
 # editor ran when Git hands us GIT_EDITOR=: (probe-cleanup-modes.sh).
 cleanup=$(git config --get commit.cleanup 2>/dev/null || true)
+# git validates commit.cleanup itself, so only these five values reach the hook;
+# an unset strip_comments means "treat the text as content", which fails closed.
 case "$cleanup" in
     strip) strip_comments=1 ;;
-    whitespace|verbatim) strip_comments=0 ;;
-    *) if [ "${GIT_EDITOR:-}" = ":" ]; then strip_comments=0; else strip_comments=1; fi ;;
+    # scissors is whitespace-plus-truncation, not comment removal, so it keeps
+    # comments along with verbatim and whitespace.
+    verbatim|whitespace|scissors) strip_comments=0 ;;
+    ""|default) if [ "${GIT_EDITOR:-}" = ":" ]; then strip_comments=0; else strip_comments=1; fi ;;
 esac
 # `git commit -v` appends commented template lines and the diff itself after a
 # scissors marker; a Refs line in either must not satisfy the check. Only the
