@@ -421,6 +421,24 @@ class StageRootfsTests(unittest.TestCase):
         sk.close()
 
 
+    def test_the_screen_timeout_file_is_written_through_a_unique_temp_file(self):
+        # Same flaw a reviewer found in a sibling helper: a fixed temporary name (`screen-timeout.tmp`) is shared by parallel callers and a link planted there would be written through as root.
+        import importlib.machinery, importlib.util, os, tempfile, threading
+        idle = str(HERE / 'rootfs/usr/bin/wisp-screen-idle')
+        spec = importlib.util.spec_from_loader('wisp_screen_idle4', importlib.machinery.SourceFileLoader('wisp_screen_idle4', idle))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        d = Path(tempfile.mkdtemp(prefix='wispos-screen-tmp-', dir=os.environ.get('TMPDIR'))); m.TIMEOUT_FILE = str(d / 'config' / 'screen-timeout')
+        (d / 'config').mkdir(); victim = d / 'victim'; victim.write_text('untouched\n'); (d / 'config' / 'screen-timeout.tmp').symlink_to(victim)
+        m.write_timeout(45)
+        self.assertEqual(victim.read_text(), 'untouched\n', 'the planted link was written through')
+        self.assertEqual((d / 'config' / 'screen-timeout').read_text(), '45\n')
+        self.assertEqual((d / 'config' / 'screen-timeout').stat().st_mode & 0o777, 0o644, 'the file stays readable (a private temp file must not become a private result)')
+        threads = [threading.Thread(target=m.write_timeout, args=(n,)) for n in (10, 20, 30, 60, 120, 300) * 4]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        self.assertIn((d / 'config' / 'screen-timeout').read_text(), ['%d\n' % n for n in (10, 20, 30, 60, 120, 300)], 'parallel writers left a mixed value')
+        left = sorted(p.name for p in (d / 'config').iterdir()); self.assertEqual(left, ['screen-timeout', 'screen-timeout.tmp'], 'a temporary file was left behind: %s' % left)
+
     def test_the_screen_blanks_when_idle_and_wakes_on_a_button_press(self):
         # Operator request 2026-10-09: turn the screen off when it is not in use (backlight wear, battery). Measured on the handheld: sway `output DSI-1 power off`
         # sets bl_power=4 and DPMS Off, and `grim` cannot capture while it is off (so scripts wake it first).

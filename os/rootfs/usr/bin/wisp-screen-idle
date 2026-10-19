@@ -4,7 +4,7 @@
 #   activity: a key press on the pad, the volume keys or the power key; `wisp-screen wake` also counts. Held off while /run/wisp-screen-inhibit exists.
 # `wisp-screen-idle --timeout [status|off|SECS]` reads or sets that same file (it is what `wisp-screen timeout` runs): the file stays the single authority and a change is live, with no restart.
 # Every activity also touches /run/wisp-last-input, which wisp-compat-gate reads. The idle decision is a pure function (decide) so it can be tested without a screen. Stdlib only.
-import glob, os, select, struct, subprocess, sys, time
+import glob, os, select, struct, subprocess, sys, tempfile, time
 
 TIMEOUT_FILE = os.environ.get('WISP_SCREEN_TIMEOUT_FILE', '/storage/wispos/config/screen-timeout'); DEFAULT_TIMEOUT = 120
 RUN = os.environ.get('WISP_SCREEN_RUN', '/run'); BL = os.environ.get('WISP_BACKLIGHT', '/sys/class/backlight/backlight/bl_power')
@@ -35,11 +35,19 @@ def parse_timeout(text):
 
 
 def write_timeout(secs):
-    """Set the timeout file (and its directory) atomically, so the watcher, which re-reads it every second, never sees half a value."""
-    os.makedirs(os.path.dirname(TIMEOUT_FILE), exist_ok=True)
-    tmp = TIMEOUT_FILE + '.tmp'
-    with open(tmp, 'w') as f: f.write('%d\n' % secs)
-    os.replace(tmp, TIMEOUT_FILE)
+    """Set the timeout file (and its directory) atomically, so the watcher, which re-reads it every second, never sees half a value. The temporary file is unique and created
+    exclusively in the same directory (no planted link is followed, parallel callers never share one) and is given mode 0644 before the rename."""
+    directory = os.path.dirname(TIMEOUT_FILE)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=os.path.basename(TIMEOUT_FILE) + '.')
+    try:
+        with os.fdopen(fd, 'w') as f: f.write('%d\n' % secs)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, TIMEOUT_FILE)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
 
 
 def timeout_command(arg):
