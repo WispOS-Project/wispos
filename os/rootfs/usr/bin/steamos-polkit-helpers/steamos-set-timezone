@@ -17,9 +17,11 @@ case $zone in
 esac
 [ -f "$ZONEINFO/$zone" ] || usage
 [ "$(head -c 4 "$ZONEINFO/$zone")" = TZif ] || usage
-write_atomic() {   # FILE TEXT: temp file in the same directory, then rename, so a reader never sees half a value
+write_atomic() {   # FILE TEXT: a UNIQUE temp file made exclusively in the same directory (so no planted link is followed and two calls never share one), then a rename: a reader never sees half a value
     mkdir -p "$(dirname "$1")" || return 1
-    printf '%s\n' "$2" >"$1.tmp" && mv -f "$1.tmp" "$1"
+    tmp=$(mktemp "$1.XXXXXX") || return 1
+    if printf '%s\n' "$2" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$1"; then return 0; fi
+    rm -f "$tmp"; return 1
 }
 write_atomic "$TZ_FILE" "TIMEZONE=$zone" || { echo "steamos-set-timezone: cannot write $TZ_FILE" >&2; exit 1; }
 write_atomic "$NAME_FILE" "$zone" || { echo "steamos-set-timezone: cannot write $NAME_FILE" >&2; exit 1; }

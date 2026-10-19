@@ -63,6 +63,29 @@ class SteamosSetTimezoneTests(Base):
         self.assertEqual(len(self.systemctl_calls()), n, 'a refused value must not restart anything')
         self.assertEqual(self.run_set()[0], 2); self.assertEqual(self.run_set('UTC', 'Europe/London')[0], 2)      # exactly one argument
 
+    def test_a_pre_existing_symlink_at_a_guessable_temp_name_is_never_followed(self):
+        # Review of the PR: the temporary file had a fixed name (`FILE.tmp`), so a link planted there would have been written through, as root, and two calls would have shared one temp file.
+        victim = self.d / 'victim'; victim.write_text('untouched\n')
+        self.tzfile.parent.mkdir(parents=True)
+        for planted in (self.tzfile.parent / 'timezone.tmp', self.namefile.parent / 'system_timezone.tmp'): planted.symlink_to(victim)
+        rc, _, err = self.run_set('Europe/London'); self.assertEqual(rc, 0, err)
+        self.assertEqual(victim.read_text(), 'untouched\n', 'the planted link was written through')
+        self.assertEqual(self.tzfile.read_text(), 'TIMEZONE=Europe/London\n'); self.assertEqual(self.namefile.read_text(), 'Europe/London\n')
+
+    def test_parallel_calls_leave_one_complete_choice_and_no_temporary_files(self):
+        zones = ['UTC', 'Europe/London', 'America/Argentina/Buenos_Aires', 'Etc/GMT+1'] * 3
+        procs = [subprocess.Popen(['sh', str(SETTZ), z], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True) for z in zones]
+        for p in procs: self.assertEqual(p.wait(timeout=60), 0, p.stderr.read())
+        chosen = self.tzfile.read_text()
+        self.assertIn(chosen, ['TIMEZONE=%s\n' % z for z in set(zones)], 'the file holds a mix, not one whole choice: %r' % chosen)
+        self.assertIn(self.namefile.read_text(), ['%s\n' % z for z in set(zones)])
+        self.assertEqual(sorted(p.name for p in self.tzfile.parent.iterdir()), ['system_timezone', 'timezone'], 'a temporary file was left behind')
+
+    def test_the_saved_files_stay_readable_by_everyone(self):
+        # tz-data.service and Steam read them; a private (0600) temporary file must not turn into a private result.
+        self.assertEqual(self.run_set('UTC')[0], 0)
+        for f in (self.tzfile, self.namefile): self.assertEqual(f.stat().st_mode & 0o777, 0o644, f.name)
+
     def test_a_failed_restart_is_reported_but_the_choice_is_kept_for_the_next_boot(self):
         rc, _, err = self.run_set('Europe/London', SYSTEMCTL_FAILS='1')
         self.assertEqual(rc, 1); self.assertIn('tz-data', err)
