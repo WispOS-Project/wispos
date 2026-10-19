@@ -2,8 +2,9 @@
 # Blank the panel when nobody has touched it for a while, and wake it on any button press. Panel wear (the backlight) and battery are why.
 #   timeout: seconds in /storage/wispos/config/screen-timeout (read every second, so it can be changed live; 0 = never blank), default 120.
 #   activity: a key press on the pad, the volume keys or the power key; `wisp-screen wake` also counts. Held off while /run/wisp-screen-inhibit exists.
+# `wisp-screen-idle --timeout [status|off|SECS]` reads or sets that same file (it is what `wisp-screen timeout` runs): the file stays the single authority and a change is live, with no restart.
 # Every activity also touches /run/wisp-last-input, which wisp-compat-gate reads. The idle decision is a pure function (decide) so it can be tested without a screen. Stdlib only.
-import glob, os, select, struct, subprocess, sys, time
+import glob, os, select, struct, subprocess, sys, tempfile, time
 
 TIMEOUT_FILE = os.environ.get('WISP_SCREEN_TIMEOUT_FILE', '/storage/wispos/config/screen-timeout'); DEFAULT_TIMEOUT = 120
 RUN = os.environ.get('WISP_SCREEN_RUN', '/run'); BL = os.environ.get('WISP_BACKLIGHT', '/sys/class/backlight/backlight/bl_power')
@@ -20,6 +21,44 @@ def decide(screen_on, now, last_activity, timeout, inhibited):
 def read_timeout():
     try: return max(0, int(open(TIMEOUT_FILE).read().split()[0]))
     except (OSError, ValueError, IndexError): return DEFAULT_TIMEOUT
+
+
+MAX_TIMEOUT = 86400                            # a day: anything longer is a typo, not a setting
+
+
+def parse_timeout(text):
+    """Seconds from a user's text: `off` (any case) or a whole number 0..MAX_TIMEOUT (0 and off both mean never blank), else None."""
+    t = text.strip().lower()
+    if t == 'off': return 0
+    if t.isascii() and t.isdigit() and int(t) <= MAX_TIMEOUT: return int(t)
+    return None
+
+
+def write_timeout(secs):
+    """Set the timeout file (and its directory) atomically, so the watcher, which re-reads it every second, never sees half a value. The temporary file is unique and created
+    exclusively in the same directory (no planted link is followed, parallel callers never share one) and is given mode 0644 before the rename."""
+    directory = os.path.dirname(TIMEOUT_FILE)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=os.path.basename(TIMEOUT_FILE) + '.')
+    try:
+        with os.fdopen(fd, 'w') as f: f.write('%d\n' % secs)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, TIMEOUT_FILE)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+
+
+def timeout_command(arg):
+    """`--timeout [status|off|SECS]`: print the value in effect ('off' for 0) after setting it when one is given. Exit 2 with a usage line for anything else."""
+    if arg != 'status':
+        secs = parse_timeout(arg)
+        if secs is None:
+            print('usage: wisp-screen timeout [status|off|SECONDS 0-%d]' % MAX_TIMEOUT, file=sys.stderr); return 2
+        write_timeout(secs)
+    secs = read_timeout()
+    print('off' if secs == 0 else secs); return 0
 
 
 def screen_is_on():
@@ -78,4 +117,6 @@ def main():
             sway('output', 'DSI-1', 'power', 'off')
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    if len(sys.argv) >= 2 and sys.argv[1] == '--timeout': sys.exit(timeout_command(sys.argv[2] if len(sys.argv) > 2 else 'status'))
+    main()
