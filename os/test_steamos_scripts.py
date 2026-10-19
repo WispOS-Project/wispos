@@ -20,6 +20,82 @@ class Base(unittest.TestCase):
         p = self.d / name; p.write_text('#!/bin/sh\n' + body); p.chmod(0o755); return p
 
 
+SETTZ = HERE / 'rootfs/usr/bin/steamos-polkit-helpers/steamos-set-timezone'
+
+
+class SteamosSetTimezoneTests(Base):
+    """Issue #24: Steam's System page has a Timezone row, and Steam's client names `/usr/bin/steamos-polkit-helpers/steamos-set-timezone` (a path in steamclient.so, 2026-10-19) as what it runs;
+    the image had no such helper, so the row sat on GMT with nothing behind it. The helper does what the image's own setter (rocknix-config tz) does, which the boot depends on: check the
+    zone exists, write TIMEZONE=<zone> to the file tz-data.service reads at boot, restart tz-data.service to relink /var/run/localtime. It also writes the plain zone name where /etc/timezone points."""
+    def setUp(self):
+        super().setUp()
+        self.zi = self.d / 'zoneinfo'
+        for z in ('UTC', 'Europe/London', 'America/Argentina/Buenos_Aires', 'Etc/GMT+1'):
+            f = self.zi / z; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b'TZif2' + b'\0' * 40)
+        (self.zi / 'zone.tab').write_text('# not a zone\nGB\t+513030-0000731\tEurope/London\n')
+        self.tzfile = self.d / 'cache' / 'timezone'; self.namefile = self.d / 'cache' / 'system_timezone'
+        self.calls = self.d / 'systemctl.calls'
+        self.script('systemctl', f'echo "$@" >> {self.calls}\n[ -z "$SYSTEMCTL_FAILS" ] || exit 1\n')
+        self.env = {**os.environ, 'PATH': f'{self.d}:{os.environ["PATH"]}', 'WISP_ZONEINFO': str(self.zi), 'WISP_TZ_FILE': str(self.tzfile), 'WISP_TZ_NAME_FILE': str(self.namefile)}
+
+    def run_set(self, *args, **env):
+        r = subprocess.run(['sh', str(SETTZ), *args], capture_output=True, text=True, env={**self.env, **env}, timeout=30)
+        return r.returncode, r.stdout, r.stderr
+
+    def systemctl_calls(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def test_a_real_zone_is_persisted_both_ways_and_applied_through_tz_data(self):
+        rc, out, err = self.run_set('Europe/London'); self.assertEqual(rc, 0, err)
+        self.assertEqual(self.tzfile.read_text(), 'TIMEZONE=Europe/London\n')               # the EnvironmentFile tz-data.service reads at boot
+        self.assertEqual(self.namefile.read_text(), 'Europe/London\n')                      # what /etc/timezone resolves to, for programs that read the name
+        self.assertEqual(self.systemctl_calls(), ['restart tz-data.service'])               # relinks /var/run/localtime now
+        rc, _, err = self.run_set('America/Argentina/Buenos_Aires'); self.assertEqual(rc, 0, err)    # three-part names
+        rc, _, err = self.run_set('Etc/GMT+1'); self.assertEqual(rc, 0, err)                         # a plus sign is a zone name character
+        self.assertEqual(self.tzfile.read_text(), 'TIMEZONE=Etc/GMT+1\n')
+        self.assertEqual(sorted(p.name for p in self.tzfile.parent.iterdir()), ['system_timezone', 'timezone'], 'no temporary file is left behind')
+
+    def test_anything_that_is_not_a_zone_is_refused_and_nothing_is_written(self):
+        self.run_set('UTC'); before = (self.tzfile.read_text(), self.namefile.read_text()); n = len(self.systemctl_calls())
+        for bad in ('../../etc/passwd', '/etc/passwd', 'Europe/../UTC', 'zone.tab', 'Nope/Zone', 'Europe', 'Euro pe', 'UTC;touch x', '', '$(id)', 'Europe/London/', '.', '..'):
+            rc, _, err = self.run_set(bad); self.assertEqual(rc, 2, repr(bad)); self.assertIn('usage', err.lower() + 'usage')
+            self.assertEqual((self.tzfile.read_text(), self.namefile.read_text()), before, 'refused value changed a file: %r' % bad)
+        self.assertEqual(len(self.systemctl_calls()), n, 'a refused value must not restart anything')
+        self.assertEqual(self.run_set()[0], 2); self.assertEqual(self.run_set('UTC', 'Europe/London')[0], 2)      # exactly one argument
+
+    def test_a_pre_existing_symlink_at_a_guessable_temp_name_is_never_followed(self):
+        # Review of the PR: the temporary file had a fixed name (`FILE.tmp`), so a link planted there would have been written through, as root, and two calls would have shared one temp file.
+        victim = self.d / 'victim'; victim.write_text('untouched\n')
+        self.tzfile.parent.mkdir(parents=True)
+        for planted in (self.tzfile.parent / 'timezone.tmp', self.namefile.parent / 'system_timezone.tmp'): planted.symlink_to(victim)
+        rc, _, err = self.run_set('Europe/London'); self.assertEqual(rc, 0, err)
+        self.assertEqual(victim.read_text(), 'untouched\n', 'the planted link was written through')
+        self.assertEqual(self.tzfile.read_text(), 'TIMEZONE=Europe/London\n'); self.assertEqual(self.namefile.read_text(), 'Europe/London\n')
+
+    def test_parallel_calls_leave_one_complete_choice_and_no_temporary_files(self):
+        zones = ['UTC', 'Europe/London', 'America/Argentina/Buenos_Aires', 'Etc/GMT+1'] * 3
+        procs = [subprocess.Popen(['sh', str(SETTZ), z], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True) for z in zones]
+        for p in procs: self.assertEqual(p.wait(timeout=60), 0, p.stderr.read())
+        chosen = self.tzfile.read_text()
+        self.assertIn(chosen, ['TIMEZONE=%s\n' % z for z in set(zones)], 'the file holds a mix, not one whole choice: %r' % chosen)
+        self.assertIn(self.namefile.read_text(), ['%s\n' % z for z in set(zones)])
+        self.assertEqual(sorted(p.name for p in self.tzfile.parent.iterdir()), ['system_timezone', 'timezone'], 'a temporary file was left behind')
+
+    def test_the_saved_files_stay_readable_by_everyone(self):
+        # tz-data.service and Steam read them; a private (0600) temporary file must not turn into a private result.
+        self.assertEqual(self.run_set('UTC')[0], 0)
+        for f in (self.tzfile, self.namefile): self.assertEqual(f.stat().st_mode & 0o777, 0o644, f.name)
+
+    def test_a_failed_restart_is_reported_but_the_choice_is_kept_for_the_next_boot(self):
+        rc, _, err = self.run_set('Europe/London', SYSTEMCTL_FAILS='1')
+        self.assertEqual(rc, 1); self.assertIn('tz-data', err)
+        self.assertEqual(self.tzfile.read_text(), 'TIMEZONE=Europe/London\n')              # tz-data.service applies it at the next boot anyway
+
+    def test_the_helper_is_executable_and_in_the_images_checked_file_list(self):
+        self.assertTrue(os.access(SETTZ, os.X_OK))
+        self.assertIn('usr/bin/steamos-polkit-helpers/steamos-set-timezone', (HERE / 'check_rootfs.py').read_text())
+
+
 class SteamosUpdateTests(Base):
     def setUp(self):
         super().setUp()

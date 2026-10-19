@@ -1,0 +1,28 @@
+#!/bin/sh
+# steamos-set-timezone ZONE: the time zone Steam's System page asks for (its Timezone row; Steam's client names this helper by path in steamclient.so, found 2026-10-19; issue #24).
+# Persisting: the image keeps the zone where ROCKNIX's own setter keeps it (rocknix-config tz): TIMEZONE=<zone> in /storage/.cache/timezone, which tz-data.service reads at every boot and links
+# /var/run/localtime to. Applying now: restart tz-data.service. The plain zone name also goes to /storage/.cache/system_timezone, the file /etc/timezone points at, for programs that read the name.
+# ZONE must be a real zone: a regular file in the zoneinfo tree that starts with the TZif magic (so `zone.tab`, directories and `../` tricks are refused), exactly one argument. Exit 0 = done,
+# 2 = refused (nothing written, nothing restarted), 1 = saved but the restart failed (the choice still applies at the next boot).
+# Whether Steam's call passes just the zone name is to be confirmed on the device (device checklist): if its log shows another form, name it here.
+# Environment (test seams; production defaults): WISP_ZONEINFO, WISP_TZ_FILE, WISP_TZ_NAME_FILE.
+ZONEINFO=${WISP_ZONEINFO:-/usr/share/zoneinfo}
+TZ_FILE=${WISP_TZ_FILE:-/storage/.cache/timezone}
+NAME_FILE=${WISP_TZ_NAME_FILE:-/storage/.cache/system_timezone}
+usage() { echo "usage: steamos-set-timezone ZONE   (for example Europe/London)" >&2; exit 2; }
+[ $# -eq 1 ] || usage
+zone=$1
+case $zone in
+    ''|/*|*/|*..*|*//*|.*|*[!A-Za-z0-9_+/-]*) usage ;;
+esac
+[ -f "$ZONEINFO/$zone" ] || usage
+[ "$(head -c 4 "$ZONEINFO/$zone")" = TZif ] || usage
+write_atomic() {   # FILE TEXT: a UNIQUE temp file made exclusively in the same directory (so no planted link is followed and two calls never share one), then a rename: a reader never sees half a value
+    mkdir -p "$(dirname "$1")" || return 1
+    tmp=$(mktemp "$1.XXXXXX") || return 1
+    if printf '%s\n' "$2" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$1"; then return 0; fi
+    rm -f "$tmp"; return 1
+}
+write_atomic "$TZ_FILE" "TIMEZONE=$zone" || { echo "steamos-set-timezone: cannot write $TZ_FILE" >&2; exit 1; }
+write_atomic "$NAME_FILE" "$zone" || { echo "steamos-set-timezone: cannot write $NAME_FILE" >&2; exit 1; }
+systemctl restart tz-data.service || { echo "steamos-set-timezone: saved $zone, but restarting tz-data.service failed (it applies at the next boot)" >&2; exit 1; }
