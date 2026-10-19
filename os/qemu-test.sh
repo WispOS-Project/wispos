@@ -76,7 +76,16 @@ check "the unit is active, started by the bus and not enabled in any target" \
     "[ \"\$(as_root 'systemctl is-active wisp-steamos-manager.service')\" = active ] && [ \"\$(as_root 'systemctl is-enabled wisp-steamos-manager.service 2>&1')\" != enabled ]"
 check "Steam's start-up call (Atomupd1.DisableHttpProxy) succeeds" "as_root 'busctl --system call com.steampowered.Atomupd1 /com/steampowered/Atomupd1 com.steampowered.Atomupd1 DisableHttpProxy'"
 update_check_output() { as_root 'busctl --system call com.steampowered.Atomupd1 /com/steampowered/Atomupd1 com.steampowered.Atomupd1 CheckForUpdates a{sv} 0 2>&1' || true; }     # busctl exits 1 on the expected error: pipefail must not see it
-check "an update check reaches the helper and says plainly what it found (no release published yet, no network, or no source: nothing is guessed)" "[[ \"\$(update_check_output)\" == *'no update has been published yet'* || \"\$(update_check_output)\" == *'cannot reach the update server'* || \"\$(update_check_output)\" == *'no update source is configured'* ]]"
+# A DEFINITE answer: a successful reply (busctl prints `a{sa{sv}}a{sa{sv}} N M`: nothing newer, or entries when an update exists) or one of the plain errors for no release published,
+# no network or no source. Anything else (access denied, a timeout, no output) is not an answer. The three plain errors predate the first published release (issue #35).
+update_check_ok() {
+    case "$1" in
+        *'no update has been published yet'*|*'cannot reach the update server'*|*'no update source is configured'*) return 0 ;;
+        'a{sa{sv}}a{sa{sv}} '[0-9]*) return 0 ;;
+    esac
+    return 1
+}
+check "an update check reaches the helper and gets a definite answer (a successful reply, or no release published, no network, or no source: nothing is guessed)" "update_check_ok \"\$(update_check_output)\""
 check "SteamOSManager1: the session bus starts the manager role inside the session and DeviceModel answers" \
     "as_root 'dbus-run-session -- busctl --user get-property com.steampowered.SteamOSManager1 /com/steampowered/SteamOSManager1 com.steampowered.SteamOSManager1.Manager2 DeviceModel' | grep -q '^(ss)'"
 session_role_running() { as_root "ps w | grep -q -- '[-]-manager session'"; }     # the system-bus instance is the same program: tell them apart by the role on its command line
