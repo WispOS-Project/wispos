@@ -421,6 +421,24 @@ class StageRootfsTests(unittest.TestCase):
         sk.close()
 
 
+    def test_the_screen_timeout_file_is_written_through_a_unique_temp_file(self):
+        # Same flaw a reviewer found in a sibling helper: a fixed temporary name (`screen-timeout.tmp`) is shared by parallel callers and a link planted there would be written through as root.
+        import importlib.machinery, importlib.util, os, tempfile, threading
+        idle = str(HERE / 'rootfs/usr/bin/wisp-screen-idle')
+        spec = importlib.util.spec_from_loader('wisp_screen_idle4', importlib.machinery.SourceFileLoader('wisp_screen_idle4', idle))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        d = Path(tempfile.mkdtemp(prefix='wispos-screen-tmp-', dir=os.environ.get('TMPDIR'))); m.TIMEOUT_FILE = str(d / 'config' / 'screen-timeout')
+        (d / 'config').mkdir(); victim = d / 'victim'; victim.write_text('untouched\n'); (d / 'config' / 'screen-timeout.tmp').symlink_to(victim)
+        m.write_timeout(45)
+        self.assertEqual(victim.read_text(), 'untouched\n', 'the planted link was written through')
+        self.assertEqual((d / 'config' / 'screen-timeout').read_text(), '45\n')
+        self.assertEqual((d / 'config' / 'screen-timeout').stat().st_mode & 0o777, 0o644, 'the file stays readable (a private temp file must not become a private result)')
+        threads = [threading.Thread(target=m.write_timeout, args=(n,)) for n in (10, 20, 30, 60, 120, 300) * 4]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        self.assertIn((d / 'config' / 'screen-timeout').read_text(), ['%d\n' % n for n in (10, 20, 30, 60, 120, 300)], 'parallel writers left a mixed value')
+        left = sorted(p.name for p in (d / 'config').iterdir()); self.assertEqual(left, ['screen-timeout', 'screen-timeout.tmp'], 'a temporary file was left behind: %s' % left)
+
     def test_the_screen_blanks_when_idle_and_wakes_on_a_button_press(self):
         # Operator request 2026-10-09: turn the screen off when it is not in use (backlight wear, battery). Measured on the handheld: sway `output DSI-1 power off`
         # sets bl_power=4 and DPMS Off, and `grim` cannot capture while it is off (so scripts wake it first).
@@ -473,6 +491,39 @@ class StageRootfsTests(unittest.TestCase):
         shells = [['sh']]                                      # the device runs BusyBox ash; the host's sh is dash: the script must behave the same under both
         if shutil.which('busybox'): shells.append(['busybox', 'sh'])      # NOTE: the host's busybox sh runs ITS OWN mke2fs/mount/umount/partprobe applets before $PATH, so the fake tools
         return shells                                          # cannot stand in there: scenarios that reach the tools run under `sh` only, refusals and parsing under both
+
+    def test_the_screen_timeout_can_be_read_and_set_through_wisp_screen(self):
+        # Issue #6: the 120 s blank timeout was only changeable by writing /storage/wispos/config/screen-timeout by hand. `wisp-screen timeout [SECS|off|status]` is the one entry point
+        # for scripts and the UI; the file stays the single authority (wisp-screen-idle re-reads it every second, so a change is live) and the value 0 (never blank) is how blanking is turned
+        # off: the idle service must NOT be masked or stopped, because it is the only writer of /run/wisp-last-input, which wisp-compat-gate reads.
+        import importlib.machinery, importlib.util, os, subprocess, tempfile
+        idle = str(HERE / 'rootfs/usr/bin/wisp-screen-idle')
+        spec = importlib.util.spec_from_loader('wisp_screen_idle3', importlib.machinery.SourceFileLoader('wisp_screen_idle3', idle))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        for text, want in (('off', 0), ('0', 0), ('45', 45), (' 300 ', 300), ('600\n', 600), ('86400', 86400), ('OFF', 0)):
+            self.assertEqual(m.parse_timeout(text), want, text)
+        for bad in ('', 'abc', '-1', '1.5', '86401', '1e3', '12 13', 'never'):
+            self.assertIsNone(m.parse_timeout(bad), bad)
+        d = Path(tempfile.mkdtemp(prefix='wispos-screen-timeout-', dir=os.environ.get('TMPDIR')))
+        # the command, through a wrapper that runs the real idle script against a temporary timeout file, and a fake systemctl that records any use
+        f = d / 'config' / 'screen-timeout'
+        (d / 'idle').write_text('#!/bin/sh\nexec python3 "%s" "$@"\n' % idle); (d / 'idle').chmod(0o755)
+        (d / 'systemctl').write_text('#!/bin/sh\necho "$@" >> "%s/systemctl.calls"\n' % d); (d / 'systemctl').chmod(0o755)
+        env = {**os.environ, 'PATH': f'{d}:{os.environ["PATH"]}', 'WISP_SCREEN_IDLE': str(d / 'idle'), 'WISP_SCREEN_TIMEOUT_FILE': str(f), 'WISP_SCREEN_RUN': str(d), 'SWAYSOCK': '/nonexistent'}
+        run = lambda *a: subprocess.run(['sh', str(HERE / 'rootfs/usr/bin/wisp-screen'), 'timeout', *a], env=env, capture_output=True, text=True)
+        r = run('status'); self.assertEqual((r.returncode, r.stdout.strip()), (0, '120'), r.stderr)                 # the default when no file exists
+        self.assertEqual(run().stdout.strip(), '120')                                                              # bare `timeout` is status
+        r = run('30'); self.assertEqual((r.returncode, r.stdout.strip()), (0, '30'), r.stderr)
+        self.assertEqual(f.read_text(), '30\n'); self.assertEqual(run('status').stdout.strip(), '30')               # the file is created (with its directory) and read back
+        r = run('off'); self.assertEqual((r.returncode, r.stdout.strip()), (0, 'off')); self.assertEqual(f.read_text(), '0\n'); self.assertEqual(run('status').stdout.strip(), 'off')
+        self.assertEqual(run('0').stdout.strip(), 'off')
+        run('300'); self.assertEqual(m.parse_timeout(f.read_text()), 300)
+        before = f.read_text()
+        for bad in ('abc', '-5', '99999999', '1.5'):
+            r = run(bad); self.assertEqual(r.returncode, 2, bad); self.assertEqual(f.read_text(), before, 'a rejected value leaves the file alone: ' + bad); self.assertIn('usage', r.stderr)
+        self.assertEqual([p.name for p in f.parent.iterdir()], ['screen-timeout'], 'no temporary file is left behind')
+        self.assertFalse((d / 'systemctl.calls').exists(), 'setting the timeout never touches the idle service')
+        self.assertIn('timeout', subprocess.run(['sh', str(HERE / 'rootfs/usr/bin/wisp-screen')], env=env, capture_output=True, text=True).stderr)   # the usage line names the verb
 
     def test_tf2_card_formats_only_the_card_in_the_tf2_slot_and_refuses_everything_else(self):
         # Operator 2026-10-10: wire up formatting and using the 128 GB card in the TF2 slot. The OS lives on the boot card (4020000.mmc): the tool must pick its target by the
