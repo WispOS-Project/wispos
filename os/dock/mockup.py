@@ -6,7 +6,7 @@ docs/WISPOS-OS-DESIGN.md "The dock and the application menu").
 
 These are DESIGN pictures, not screenshots of a running program (nothing of the dock exists yet): drawn at the panel's 720x480 from the tokens of os/ui/wisp-ui.h and the setup
 screen's components, in Liberation Sans, so a reviewer can judge the look before any Wayland code and so the real dock can later be compared against them. The glyph drawings
-are placeholders for the icon set (flat shapes in palette colours, drawn on a 24-unit grid); the application list is invented. Deterministic: two runs give identical files.
+are placeholders for the icon set (flat shapes in palette colours, drawn on a 24-unit grid); the application list is invented. The settings screens (quick-settings-short, quick-settings-submenu, settings-display, settings-datetime) are the approved proposal of issue #39. Deterministic: two runs give identical files.
 Needs Pillow and numpy (the host's)."""
 import argparse, re, sys
 from pathlib import Path
@@ -538,7 +538,129 @@ def screen_osk_symbols(f, wall):
     draw_osk(c, focus=(3, 6), page='symbols'); osk_hints(c); return c
 
 
-SCREENS = {'desktop-empty': screen_empty, 'desktop-window': screen_window, 'dock-focus': screen_focus, 'dock-more': screen_more, 'apps-menu': screen_menu, 'quick-settings': screen_quick, 'osk': screen_osk, 'osk-symbols': screen_osk_symbols}
+# ---------------------------------------------------------------------------------------------------------------------------- settings proposal: a short quick settings with submenus, and a dedicated settings app
+def qs_panel(c, rows_h, foot=34):
+    """The quick-settings panel box at the fixed height of the full list, so a submenu never changes its size (resolution-safe): returns (x0, y0, x1, y1)."""
+    pw = token('WISP_UI_QS_W'); h = rows_h + 12 + foot + 6
+    x0, y1 = W - pw - 8, DOCK_TOP - 8
+    c.rrect((x0, y1 - h, x0 + pw, y1), RADIUS, BG[:3] + (250,), LINE)
+    return x0, y1 - h, x0 + pw, y1
+
+
+def qs_row(c, x0, x1, y, hh, glyph, label, value=None, sel=False, chevron=False, toggle=None, slider=None):
+    f = c.f; fg, dim = (FOCUS_FG, FOCUS_DIM) if sel else (TEXT, DIM)
+    c.rrect((x0 + 10, y, x1 - 10, y + hh - 6), RADIUS, FOCUS if sel else PANEL)
+    mid = y + (hh - 6) / 2
+    c.icon(glyph, x0 + 32, mid, 18, fg if sel else GLYPH)
+    if slider is not None:
+        tx0, tx1 = x0 + 62, x1 - 28
+        c.pill((tx0, mid - 2, tx1, mid + 2), FOCUS_DIM if sel else LINE)
+        c.pill((tx0, mid - 2, tx0 + (tx1 - tx0) * slider, mid + 2), FOCUS_FG if sel else ACCENT); c.disc(tx0 + (tx1 - tx0) * slider, mid, 6, FOCUS_FG if sel else TEXT)
+        return
+    c.text((x0 + 62, mid), label, f.small, fg, 'lm')
+    if value and not chevron: c.text((x1 - 24, mid), value, f.tiny, dim, 'rm')
+    if value and chevron: c.text((x1 - 40, mid), value, f.tiny, dim, 'rm')
+    if chevron: c.icon('right', x1 - 28, mid, 16, fg if sel else DIM)
+    if toggle is not None:
+        sx = x1 - 28 - 40
+        c.pill((sx, mid - 11, sx + 40, mid + 11), (FOCUS_OK if sel else OK) if toggle else LINE)
+        c.disc(sx + (29 if toggle else 11), mid, 8, FOCUS if (sel and toggle) else TEXT)
+
+
+def qs_footer(c, x0, y1, hints):
+    hx = x0 + 14
+    for key, label in hints: hx = c.key_pill(hx, y1 - 28, key, label)
+
+
+def screen_quick_short(f, wall):
+    """Quick settings reduced to what is touched often; rows that lead somewhere carry a chevron and open a submenu in place."""
+    c = desktop_base(f, wall); terminal_window(c); draw_dock(c, PINS, running=['terminal'], active='terminal', focus='status')
+    rh = token('WISP_UI_POPUP_ROW') + 6
+    x0, y0, x1, y1 = qs_panel(c, 7 * rh)
+    y = y0 + 12
+    rows = [dict(glyph='wifi', label='Wi-Fi', value='Home-WiFi-5G', chevron=True), dict(glyph='bluetooth', label='Bluetooth', toggle=False),
+            dict(glyph='volume', label='Volume', slider=0.62), dict(glyph='brightness', label='Brightness', slider=0.40),
+            dict(glyph='ssh', label='SSH', toggle=True), dict(glyph='usb', label='USB port', value='Off', chevron=True), dict(glyph='battery', label='Battery', value='78 %', chevron=False)]
+    for i, r in enumerate(rows):
+        qs_row(c, x0, x1, y, rh, sel=i == 5, **r); y += rh
+    qs_footer(c, x0, y1, (('A', 'Change'), ('Y', 'All settings'), ('B', 'Close')))
+    return c
+
+
+def screen_quick_submenu(f, wall):
+    """The same panel after A on 'USB port': same size, same place, the content replaced; B (or the back row) returns to the list."""
+    c = desktop_base(f, wall); terminal_window(c); draw_dock(c, PINS, running=['terminal'], active='terminal', focus='status')
+    rh = token('WISP_UI_POPUP_ROW') + 6
+    x0, y0, x1, y1 = qs_panel(c, 7 * rh)
+    y = y0 + 12
+    c.rrect((x0 + 10, y, x1 - 10, y + rh - 6), RADIUS, PANEL)
+    c.icon('left', x0 + 28, y + (rh - 6) / 2, 16, GLYPH); c.text((x0 + 50, y + (rh - 6) / 2), 'USB port', f.small_bold, TEXT, 'lm'); y += rh
+    for i, (label, sub, on) in enumerate((('Off', 'port unpowered, no data', True), ('Computer', 'the handheld is a device', False), ('Host', 'powers a connected device', False))):
+        sel = i == 0
+        fg, dim = (FOCUS_FG, FOCUS_DIM) if sel else (TEXT, DIM)
+        c.rrect((x0 + 10, y, x1 - 10, y + rh * 1.5 - 6), RADIUS, FOCUS if sel else PANEL)
+        mid = y + (rh * 1.5 - 6) / 2
+        c.text((x0 + 36, mid - 8), label, f.small, fg, 'lm'); c.text((x0 + 36, mid + 11), sub, f.tiny, dim, 'lm')
+        c.disc(x1 - 34, mid, 8, FOCUS_FG if sel else ACCENT) if on else c.disc(x1 - 34, mid, 8, None or BG)
+        y += rh * 1.5
+    c.text((x0 + 18, y + 6), 'Off again at every boot.', f.tiny, DIM, 'lm')
+    qs_footer(c, x0, y1, (('A', 'Choose'), ('B', 'Back')))
+    return c
+
+
+SETTINGS_PAGES = [('Display', 'brightness'), ('Date & time', 'monitor'), ('Power', 'battery'), ('Connections', 'wifi'), ('About', 'about')]
+
+
+def settings_window(c, page, content):
+    """The settings app: a window above the dock; categories at the left (D-pad up/down), the page at the right (D-pad right, A change, B back)."""
+    f = c.f
+    c.img.paste(BG, (0, 0, W, DOCK_TOP))
+    c.text((20, 22), 'Settings', f.title, TEXT, 'lm'); c.hline(0, W, 44, LINE)
+    side = 176; y = 56
+    for name, glyph in SETTINGS_PAGES:
+        on = name == page
+        c.rrect((10, y, side - 8, y + 40), RADIUS, FOCUS if on else None)
+        c.icon(glyph, 32, y + 20, 18, FOCUS_FG if on else GLYPH); c.text((52, y + 20), name, f.small, FOCUS_FG if on else TEXT, 'lm'); y += 44
+    c.vline(side, 52, DOCK_TOP - 10, LINE)
+    content(c, side + 18, W - 18)
+    hx = side + 18
+    for key, label in (('A', 'Change'), ('B', 'Back'), ('L1/R1', 'Page')): hx = c.key_pill(hx, DOCK_TOP - 32, key, label)
+
+
+def seg_row(c, x0, x1, y, title, note, options, active, sel=False, focus=None):
+    f = c.f
+    c.text((x0, y), title, f.small_bold, TEXT, 'lm'); c.text((x0, y + 18), note, f.tiny, DIM, 'lm')
+    n = len(options); w = (x1 - x0) / n
+    for i, name in enumerate(options):
+        sx = x0 + i * w; on = i == active
+        c.rrect((sx, y + 34, sx + w - 4, y + 64), RADIUS, FOCUS if (on and sel) else TEXT if on else PANEL, ACCENT if (sel and i == focus) else None, 2)
+        c.text((sx + (w - 4) / 2, y + 49), name, f.tiny, FOCUS_FG if on else DIM, 'mm')
+
+
+def screen_settings_display(f, wall):
+    c = desktop_base(f, wall); draw_dock(c, PINS, running=['settings'], active='settings')
+    def content(c, x0, x1):
+        seg_row(c, x0, x1, 80, 'Screen timeout', 'Turn the screen off after no input', ['Never', '1 min', '5 min', '10 min', '30 min'], 2, sel=True, focus=3)
+        seg_row(c, x0, x1, 170, 'Steam UI size', 'Game mode (Steam)', ['90 %', '100 %', '125 %', '150 %'], 2)
+        seg_row(c, x0, x1, 260, 'Desktop size', 'Dock, menus and windows', ['100 %', '125 %', '150 %'], 0)
+    settings_window(c, 'Display', content); return c
+
+
+def screen_settings_datetime(f, wall):
+    c = desktop_base(f, wall); draw_dock(c, PINS, running=['settings'], active='settings')
+    def content(c, x0, x1):
+        c.text((x0, 80), 'Time zone', f.small_bold, TEXT, 'lm') if False else c.text((x0, 80), 'Time zone', c.f.small_bold, TEXT, 'lm')
+        c.text((x0, 98), 'Current: Europe/Berlin   12:34', c.f.tiny, DIM, 'lm')
+        for i, z in enumerate(('Europe/Berlin', 'Europe/Lisbon', 'Europe/London', 'America/New_York', 'America/Chicago')):
+            y = 118 + i * 38; sel = i == 2
+            c.rrect((x0, y, x1, y + 34), RADIUS, FOCUS if sel else PANEL)
+            c.text((x0 + 14, y + 17), z, c.f.small, FOCUS_FG if sel else TEXT, 'lm')
+            if i == 0: c.text((x1 - 14, y + 17), 'current', c.f.tiny, FOCUS_DIM if sel else DIM, 'rm')
+    settings_window(c, 'Date & time', content); return c
+
+
+SCREENS = {'desktop-empty': screen_empty, 'desktop-window': screen_window, 'dock-focus': screen_focus, 'dock-more': screen_more, 'apps-menu': screen_menu, 'quick-settings': screen_quick, 'osk': screen_osk, 'osk-symbols': screen_osk_symbols,
+           'quick-settings-short': screen_quick_short, 'quick-settings-submenu': screen_quick_submenu, 'settings-display': screen_settings_display, 'settings-datetime': screen_settings_datetime}
 
 
 def variants_sheet(f, badge):
