@@ -42,9 +42,55 @@ if [ "${GIT_EDITOR:-}" = ":" ]; then edited=0; else edited=1; fi
 # itself appended a verbose template) and whether it removes comment lines (the
 # cleanup mode, which `strip` also does under `-m`). A `Refs` line below either
 # dropped section must not satisfy the issue-link check.
-scissors='/^# ------------------------ >8 ------------------------$/,$d'
-if [ "$edited" = 1 ]; then body=$(sed "$scissors" "$file"); else body=$(cat "$file"); fi
-if [ "$strip_comments" = 1 ]; then body=$(printf '%s\n' "$body" | grep -v '^#'); fi
+#
+# Neither is keyed to '#'. Git writes its comment lines AND its scissor line with
+# the character from core.commentChar; only when it is unset is that '#'. So
+# anchoring either step on a literal '#' both counted a footer Git had thrown
+# away (with commentChar=';' or '!', whose ';' and '!' marker went unrecognized,
+# so the text under it was judged although Git discards it) and rejected a footer
+# Git had kept (a '#'-prefixed marker is ordinary text when the character is
+# ';'). Measured on git 2.43, this is issue #30.
+#
+# `auto` is settled by Git while it writes the template, from the message as it
+# was BEFORE the editor ran (adjust_comment_line_char, builtin/commit.c), so the
+# character cannot be recomputed here: the buffer that decided it is gone, and
+# reading it off the template text instead would let a planted line above Git's
+# own choose the wrong character and hide the real cut - failing open. So under
+# `auto` the hook cuts at the first marker-shaped line of ANY single character
+# and removes no comment lines. Git's own marker is one of those, so this can
+# only cut at or above where Git cuts, and a footer below Git's marker can never
+# be counted. The cost is a false rejection when a message carries such a line
+# for a character Git did not choose - the safe direction for a validator.
+marker=' ------------------------ >8 ------------------------'
+configured=$(git config --get core.commentChar 2>/dev/null || true)
+auto_char=0
+comment_char='#'
+case "$configured" in
+    ''|'#') : ;;
+    auto) auto_char=1 ;;
+    ?) comment_char="$configured" ;;
+    # Git refuses a value that is not one character before any hook runs, so
+    # this branch is defence in depth; treat it like the unknowable case.
+    *) auto_char=1 ;;
+esac
+if [ "$edited" = 1 ]; then
+    if [ "$auto_char" = 1 ]; then
+        # substr from the 2nd character equal to the whole marker implies the
+        # line is exactly one character plus that marker: no length arithmetic,
+        # and no regex, so a marker character that is regex-special is safe.
+        body=$(WISP_MARK="$marker" \
+            awk 'substr($0, 2) == ENVIRON["WISP_MARK"] { exit } { print }' "$file")
+    else
+        body=$(WISP_MARK="$comment_char$marker" \
+            awk '$0 == ENVIRON["WISP_MARK"] { exit } { print }' "$file")
+    fi
+else
+    body=$(cat "$file")
+fi
+if [ "$strip_comments" = 1 ] && [ "$auto_char" = 0 ]; then
+    body=$(printf '%s\n' "$body" | WISP_CHAR="$comment_char" \
+        awk 'index($0, ENVIRON["WISP_CHAR"]) != 1')
+fi
 body=$(printf '%s\n' "$body" | sed '/[^[:space:]]/,$!d')
 subject=$(printf '%s\n' "$body" | head -n 1)
 case "$subject" in
