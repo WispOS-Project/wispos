@@ -6,6 +6,8 @@ policy in `AGENTS.md`.
 
 ## [Unreleased]
 
+- **Design pictures draw true pills (tooling fix, PATCH; #39):** `os/dock/mockup.py` clamped a pill's radius to the full height instead of half of it, so switch rails, hint pills and key pills came out egg-shaped. Every picture in `os/dock/design/` is regenerated, and the view comparison no longer ignores the SSH switch.
+
 - **Quick settings: the USB port opens an in-place submenu (feature, MINOR; approved design, #39):** the USB row of the desktop shell's quick settings is now a row with a chevron that opens a submenu in the same panel (back row, Off / Computer / Host with a line each, and the "off again at every boot" note); the panel keeps its size and position, A applies a mode and returns, B or the back row returns without applying, and Wi-Fi shows a chevron too (A still opens the chooser). The segmented control is gone. The design pictures `quick-settings` and `quick-settings-submenu` replace the old one, `os/dock/test_ui.c` and the view comparison cover the new behaviour, and the mutation list was updated (a mutant of each new rule is caught). No change to the `wisp-usb` interface.
 
 - **Settings app and quick-settings submenu designs (documentation; no runtime SemVer change; #39):** `os/dock/mockup.py` draws four more 720x480 design pictures (short quick settings with chevron rows, the in-place submenu, the Display and Date & time pages of a dedicated Settings app) into `os/dock/design/`; the maintainer approved them. No shell code changes yet.

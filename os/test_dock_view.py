@@ -62,7 +62,7 @@ VIEW_MUTANTS = [
     ('the submenu panel follows its rows', 'if (q->height > 0) return q->height;', ''),
     ('the back row has no chevron', 'view_glyph(v, "left", 0, 18, (float)(x0 + 28), (float)top, sel ? FOCUS_FG : GLYPHC);', '(void)0;'),
     ('a mode has no second line', 'if (r->value) rd_text_fit(v->c, v->f->tiny, IX(v, x0 + 36), IY(v, top + 11), pw - 36 - 56, r->value, dim, RD_LEFT, RD_MIDDLE);', '(void)0;'),
-    ('the mode that is on has no mark', 'r->on ? (sel ? FOCUS_FG : ACCENT) : BG);', 'BG);'),
+    ('the mark of the mode that is on is white on the white selected row', 'r->on ? (sel ? FOCUS_FG : ACCENT) : BG);', 'r->on ? (sel ? FOCUS : ACCENT) : BG);'),
     ('the submenu note is one pixel low', 'IY(v, y + 6), r->label, DIM, RD_LEFT, RD_MIDDLE);', 'IY(v, y + 7), r->label, DIM, RD_LEFT, RD_MIDDLE);'),
     ('a mode row is not one and a half rows high', 'if (r->kind == QS_CHOICE) return rh + rh / 2;', 'if (r->kind == QS_CHOICE) return rh + 10;'),
     ('the quick settings hints sit higher', 'view_key_pill(v, hx, y1 - foot + 4,', 'view_key_pill(v, hx, y1 - foot + 2,'),
@@ -157,9 +157,7 @@ class ViewTests(unittest.TestCase):
     def test_dock_more(self):            self.compare('dock-more')
     def test_apps_menu(self):            self.compare('apps-menu')
     def test_quick_settings(self):
-        # The picture's SSH switch is an ellipse: mockup.py's _rr() turns a radius of half the height into the full height, and Pillow then draws an oval. The language document says
-        # "switches are 40 x 22 pills", and the shell draws the pill; the box is the switch's.
-        self.compare('quick-settings', ignore=[(640, 258, 690, 292)])
+        self.compare('quick-settings')
     def test_quick_settings_submenu(self): self.compare('quick-settings-submenu')
     def test_osk(self):                  self.compare('osk')
     def test_osk_symbols(self):          self.compare('osk-symbols')

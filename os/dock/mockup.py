@@ -57,11 +57,11 @@ class Fonts:
 
 
 def _rr(d, box, radius=0, fill=None, outline=None, width=0):
-    """Pillow's rounded_rectangle fails when the radius is about half a side; clamp it, and fall back to a plain rectangle."""
+    """Pillow's rounded_rectangle: a radius of about half the shorter side is a full round (a pill, or a disc on a square); anything larger bends the ends into an ellipse (an egg), so it is clamped to exactly half."""
     x0, y0, x1, y1 = box
     side = min(x1 - x0, y1 - y0)
     if radius < 0.5: d.rectangle((x0, y0, x1, y1), fill=fill, outline=outline, width=width)
-    else: d.rounded_rectangle(box, radius=side if 2 * radius >= side - 3 else radius, fill=fill, outline=outline, width=width)      # about half a side = fully round
+    else: d.rounded_rectangle(box, radius=side / 2 if 2 * radius >= side - 3 else radius, fill=fill, outline=outline, width=width)      # about half a side = fully round
 
 
 class Canvas:
