@@ -57,7 +57,8 @@ class Fonts:
 
 
 def _rr(d, box, radius=0, fill=None, outline=None, width=0):
-    """Pillow's rounded_rectangle: a radius of about half the shorter side is a full round (a pill, or a disc on a square); anything larger bends the ends into an ellipse (an egg), so it is clamped to exactly half."""
+    """Pillow's rounded_rectangle: a radius of about half the shorter side is a full round (a pill, or a disc on a square); anything larger bends the ends into an ellipse (an egg), so it is clamped to exactly half.
+    Keep this in step with the shell's renderer: view.c draws pills with rd_pill (render.c), whose radius is half the shorter side too. os/test_dock_view.py compares the two pixel by pixel, so a change on one side only shows up there."""
     x0, y0, x1, y1 = box
     side = min(x1 - x0, y1 - y0)
     if radius < 0.5: d.rectangle((x0, y0, x1, y1), fill=fill, outline=outline, width=width)
