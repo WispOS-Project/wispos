@@ -770,7 +770,7 @@ static void run_effects(void)
             case EFF_SET_BRIGHTNESS: { char sysfs[300]; snprintf(sysfs, sizeof sysfs, "%s/class/backlight", S.sysfs); if (!sys_write_backlight(sysfs, f->f, 0.05f)) note("cannot set the brightness"); break; }
             case EFF_SET_BLUETOOTH: { const char *const a[] = { "bluetoothctl", "power", f->a ? "on" : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
             case EFF_SET_SSH: { const char *const a[] = { "wisp-ssh", f->a ? "on" : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
-            case EFF_SET_SCREEN_TIMEOUT: { char n[16]; snprintf(n, sizeof n, "%d", f->a); const char *const a[] = { "wisp-screen", "timeout", f->a > 0 ? n : "off", NULL }; job_start(J_FIRE, a); break; }
+            case EFF_SET_SCREEN_TIMEOUT: { char n[16]; snprintf(n, sizeof n, "%d", f->a); const char *const a[] = { "wisp-screen", "timeout", f->a > 0 ? n : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }       /* as for the other settings: read it back only after it was written */
             case EFF_SET_USB: { const char *const a[] = { "wisp-usb", f->a == 0 ? "off" : f->a == 1 ? "computer" : "host", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
             case EFF_WIFI: ui_toast(&S.ui, "Wi-Fi networks", "Choose one in Game mode: Settings, Internet.", 5000); break;
             case EFF_REFRESH: refresh_fast(); refresh_slow(); break;
