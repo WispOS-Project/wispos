@@ -449,9 +449,13 @@ static void set_enter(Ui *u)                                                    
     dirty(u, DIRTY_SETTINGS);
 }
 
+/* Which rows apply something when picked. Every row counted by set_nrows needs a case here and in set_apply: a click on a row that is not listed is ignored, so a row added
+ * without its case cannot be selected and then do nothing. */
+static bool set_applies(int page, int row) { return page == SET_DISPLAY && row == 0; }
+
 static void set_apply(Ui *u)
 {
-    if (u->set_page == SET_DISPLAY && u->set_row == 0) {
+    if (set_applies(u->set_page, u->set_row)) {
         int secs = TIMEOUT_SECS[clampi(u->set_opt, 0, 5)];
         if (secs != u->sys.screen_timeout) { u->sys.screen_timeout = secs; eff(u, EFF_SET_SCREEN_TIMEOUT, secs, 0, 0, 0, NULL); }
     }
@@ -506,7 +510,7 @@ static void pointer_settings(Ui *u, int x, int y, UiPtr ev, int button)
     set_build(u, pages, rows, note, hints, &sv);
     SetHit h = view_settings_hit(&sv, x, y);
     if (h.page >= 0) { u->set_page = h.page; u->set_in = false; dirty(u, DIRTY_SETTINGS); }
-    else if (h.row >= 0) { u->set_in = true; u->set_row = h.row; u->set_opt = h.opt; set_apply(u); }
+    else if (h.row >= 0 && set_applies(u->set_page, h.row)) { u->set_in = true; u->set_row = h.row; u->set_opt = h.opt; set_apply(u); }
 }
 
 /* ------------------------------------------------------------------ the on-screen keyboard */

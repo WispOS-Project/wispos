@@ -99,6 +99,8 @@ typedef struct { const SetPage *pages; int npages, page; const SetRow *rows; int
 int  view_settings_height(void);                         /* the window's height: the screen above the strip */
 void view_settings(const Vctx *v, const SettingsView *s);
 typedef struct { int page, row, opt; } SetHit;           /* page >= 0: a category; row >= 0 and opt >= 0: an option; all -1: nothing under the point */
+/* The point is in the window's own coordinates: x from its left edge and y from its top, which is the screen's top (the window sits above the strip, anchored to the top, with no offset).
+ * A shell that places it elsewhere must subtract that origin first. */
 SetHit view_settings_hit(const SettingsView *s, int px, int py);
 
 /* ------------------------------------------------------------------ the on-screen keyboard */
