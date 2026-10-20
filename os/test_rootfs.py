@@ -870,6 +870,8 @@ class StageRootfsTests(unittest.TestCase):
         text = (HERE / 'rootfs/usr/bin/wisp-steam-session').read_text()
         line = [l for l in text.splitlines() if l.startswith('export PROTON_USE_WINED3D=1')]
         self.assertEqual(line, ['export PROTON_USE_WINED3D=1 WINEDEBUG=-all'])
+        # 2026-10-20 (#38): panfrost offers GL 3.1, wined3d needs 3.2+; the session reports 3.3 compatibility to every game unless the operator set the variables
+        self.assertIn('export MESA_GL_VERSION_OVERRIDE=${MESA_GL_VERSION_OVERRIDE:-3.3COMPAT} MESA_GLSL_VERSION_OVERRIDE=${MESA_GLSL_VERSION_OVERRIDE:-330}', text)
         self.assertLess(text.index(line[0]), text.index('steamrtarm64/steam" -gamepadui'))      # exported before Steam is started
         self.assertNotIn('PROTON_LOG', text.replace('Never set PROTON_LOG', ''))                # no Proton logging default anywhere in the launcher
 

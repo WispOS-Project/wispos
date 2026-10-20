@@ -44,6 +44,9 @@ export GAMESCOPE_WAYLAND_DISPLAY=gamescope-wisp
 # through WineD3D (OpenGL) instead of DXVK; and Wine's debug logging is OFF: tracing slowed BIT.TRIP RUNNER's load from about 2 minutes to many minutes
 # (docs/WISPOS-NOTES.md, game with tracing off). Never set PROTON_LOG or a WINEDEBUG other than -all here.
 export PROTON_USE_WINED3D=1 WINEDEBUG=-all
+# Mesa's panfrost (Mali-G31) offers OpenGL 3.1, but WineD3D's capability probe needs a 3.2+ context: without these two a game that opens the OpenGL renderer ends at a black
+# window ("Failed to make caps GL context current"; Counter-Strike, measured 2026-10-20, issue #38: same device and run, only these differing). Report 3.3 compatibility.
+export MESA_GL_VERSION_OVERRIDE=${MESA_GL_VERSION_OVERRIDE:-3.3COMPAT} MESA_GLSL_VERSION_OVERRIDE=${MESA_GLSL_VERSION_OVERRIDE:-330}
 # pressure-vessel compiles the English locale inside the container at EVERY container start (two per game launch) because the container's glibc is newer than the host's, so
 # it cannot reuse the host's locale data: about 55 s of phase one and again in phase two on this CPU (measured: launch to game window 195 s with it, 129 s without;
 # docs/WISPOS-NOTES.md "Launch timeline"). Games already get LANG=C.UTF-8 LC_ALL=C from Steam; only a program asking for en_US.UTF-8 by name loses that locale.
