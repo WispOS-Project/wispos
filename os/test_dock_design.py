@@ -12,7 +12,7 @@ from PIL import Image
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 WORK = Path(os.environ.get('WISP_WORK', '/mnt/hdd/wispos-staging/wispos-os-20261007'))
-EXPECTED = {'wallpaper', 'wallpaper-variants', 'desktop-empty', 'desktop-window', 'dock-focus', 'dock-more', 'apps-menu', 'quick-settings', 'quick-settings-submenu', 'settings-display', 'settings-datetime', 'osk', 'osk-symbols'}
+EXPECTED = {'wallpaper', 'wallpaper-variants', 'desktop-empty', 'desktop-window', 'dock-focus', 'dock-more', 'apps-menu', 'quick-settings', 'quick-settings-submenu', 'settings-display', 'settings-datetime', 'quick-settings-power-button', 'quick-settings-power', 'quick-settings-power-confirm', 'osk', 'osk-symbols'}
 
 
 def load(path, name):

@@ -37,6 +37,7 @@ typedef enum {
     EFF_SET_SSH,            /* a = 1 on */
     EFF_SET_USB,            /* a = 0 off, 1 computer, 2 host */
     EFF_SET_SCREEN_TIMEOUT, /* a = seconds without input before the panel blanks, 0 never */
+    EFF_POWER,              /* a = 0 sleep, 1 restart, 2 shut down: carried out by wisp-power */
     EFF_WIFI,               /* open the Wi-Fi chooser */
     EFF_REFRESH,            /* the quick settings opened: read the system values again */
     EFF_BROWSER_ACTIONS,    /* Select in the browser layer: the list of browser actions */
@@ -64,6 +65,7 @@ typedef struct {
     float battery;                  /* 0..1, negative when there is none */
     bool charging;
     int screen_timeout;             /* seconds without input before the panel blanks, 0 never, -1 not read yet */
+    int sleep_ok;                   /* the kernel offers suspend (wisp-power can-sleep): 1 yes, 0 no, -1 not read yet; the Power submenu lists Sleep only on 1 */
 } UiSys;
 
 typedef struct {
@@ -101,7 +103,8 @@ struct Ui {
     WdAction acts[UI_ACTIONS];
     int nacts, act_sel;
     int qs_sel;
-    int qs_page;                    /* 0 the list of rows, 1 the USB port submenu (the panel keeps its size, its content changes) */
+    int qs_page;                    /* 0 the list of rows, 1 the USB port submenu, 2 the Power submenu (the panel keeps its size, its content changes) */
+    int qs_confirm, qs_opt;         /* the Power submenu's row waiting for a yes (POW_RESTART, POW_SHUTDOWN), -1 none; and which of its two buttons has the focus (0 Cancel, 1 the action) */
     bool dragging;                  /* a slider is being dragged with the pointer */
 
     bool settings;                  /* the Settings window is open */

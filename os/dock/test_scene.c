@@ -110,7 +110,7 @@ int main(int argc, char **argv)
         for (int i = 0; i < 7; i++) e[i] = (MenuEntry){ spec(ids[i]), names[i], i < 3 };
         MenuView m = { e, 7, 1, 0, "Applications", "Pick an app. X pins it to the dock.", H_MENU, 4, NULL };
         view_menu(&v, &m);
-    } else if (!strcmp(scene, "quick-settings") || !strcmp(scene, "quick-settings-submenu")) {
+    } else if (!strcmp(scene, "quick-settings") || !strcmp(scene, "quick-settings-submenu") || !strcmp(scene, "quick-settings-power-button") || !strcmp(scene, "quick-settings-power") || !strcmp(scene, "quick-settings-power-confirm")) {
         dock_build(&d, &f, argv[3], true);
         draw_dock(&v, &d, find_key(&d, "status"), false);
         QsRow rows[] = {
@@ -122,9 +122,21 @@ int main(int argc, char **argv)
             { QS_LINK, "usb", 0, "USB port", "Off", false, 0 },
             { QS_TEXT, "battery", 0, "Battery", "78 %  discharging", false, 0.78f },
         };
-        QsView list = { rows, 7, 5, H_QS, 2, 0 };
+        QsView list = { rows, 7, 5, H_QS, 2, 0, 1 };
         if (!strcmp(scene, "quick-settings")) view_quick(&v, &list);
-        else {
+        else if (!strcmp(scene, "quick-settings-power-button")) { list.selected = QS_POWER_BTN; list.power_btn = 2; view_quick(&v, &list); }
+        else if (!strcmp(scene, "quick-settings-power") || !strcmp(scene, "quick-settings-power-confirm")) {
+            bool ask = !strcmp(scene, "quick-settings-power-confirm");
+            QsRow sub[] = {
+                { QS_BACK, NULL, 0, "Power", NULL, false, 0 },
+                { QS_ACTION, "sleep", 0, "Sleep", "screen off, session kept", false, 0 },
+                ask ? (QsRow){ QS_ASK, "restart", 0, "Restart", "Unsaved work is lost.", false, 0 } : (QsRow){ QS_ACTION, "restart", 0, "Restart", "close everything, start again", false, 0 },
+                { QS_ACTION, "power", 0, "Shut down", "close everything, switch off", false, 0 },
+            };
+            Hint hints[] = { { "A", "Choose" }, { "B", "Back" } };
+            QsView q = { sub, 4, ask ? 2 : 1, hints, 2, view_quick_height(&list), 0 };
+            view_quick(&v, &q);
+        } else {
             QsRow sub[] = {
                 { QS_BACK, NULL, 0, "USB port", NULL, false, 0 },
                 { QS_CHOICE, NULL, 0, "Off", "port unpowered, no data", true, 0 },
@@ -133,19 +145,19 @@ int main(int argc, char **argv)
                 { QS_NOTE, NULL, 0, "Off again at every boot.", NULL, false, 0 },
             };
             Hint hints[] = { { "A", "Choose" }, { "B", "Back" } };
-            QsView q = { sub, 5, 1, hints, 2, view_quick_height(&list) };
+            QsView q = { sub, 5, 1, hints, 2, view_quick_height(&list), 0 };
             view_quick(&v, &q);
         }
     } else if (!strcmp(scene, "settings-display")) {
         dock_build(&d, &f, argv[3], true);
         draw_dock(&v, &d, -1, false);
-        static const SetPage pages[] = { { "Display", "brightness", 0 }, { "Date & time", "monitor", 0 }, { "Power", "battery", 0.78f }, { "Connections", "wifi", 3 }, { "About", "about", 0 } };
+        static const SetPage pages[] = { { "Display", "brightness", 0 }, { "Date & time", "monitor", 0 }, { "Connections", "wifi", 3 }, { "About", "about", 0 } };
         static const SetRow rows[] = {
             { "Screen timeout", "Turn the screen off after no input", { "Never", "1 min", "2 min", "5 min", "10 min", "30 min" }, 6, 2, 4 },
             { "Desktop size", "Dock, menus and windows", { "100 %", "125 %", "150 %" }, 3, 0, -1 },
         };
         static const Hint hints[] = { { "A", "Change" }, { "B", "Back" }, { "L2/R2", "Page" } };
-        SettingsView sv = { pages, 5, 0, rows, 2, 0, true, hints, 3 };
+        SettingsView sv = { pages, 4, 0, rows, 2, 0, true, hints, 3 };
         view_settings(&v, &sv);
     } else if (!strcmp(scene, "osk") || !strcmp(scene, "osk-symbols")) {
         OskView o = { OSK_LOWER, false, false, 2, 4 };

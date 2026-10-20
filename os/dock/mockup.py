@@ -258,8 +258,23 @@ def g_close(d, u):
     _round_line(d, u, [(6, 6), (18, 18)], 2.2); _round_line(d, u, [(18, 6), (6, 18)], 2.2)
 
 
+def g_power(d, u):
+    d.arc((3.6 * u, 4.6 * u, 20.4 * u, 21.4 * u), start=300, end=240, fill=255, width=int(round(1.9 * u)))
+    _round_line(d, u, [(12, 3), (12, 11.6)], 2.0)
+
+
+def g_restart(d, u):
+    d.arc((4 * u, 4.4 * u, 20 * u, 20.4 * u), start=40, end=335, fill=255, width=int(round(1.9 * u)))
+    d.polygon([(21.6 * u, 3.6 * u), (21.6 * u, 10.6 * u), (14.8 * u, 7.6 * u)], fill=255)
+
+
+def g_sleep(d, u):
+    d.ellipse((3.4 * u, 3.4 * u, 20.6 * u, 20.6 * u), fill=255)
+    d.ellipse((9.6 * u, 0.6 * u, 25.6 * u, 16.6 * u), fill=0)
+
+
 GLYPHS = {'apps': g_apps, 'browser': g_browser, 'terminal': g_terminal, 'settings': g_settings, 'game': g_game, 'images': g_images, 'monitor': g_monitor, 'about': g_about,
-          'wifi': g_wifi, 'down': g_down, 'up': g_up, 'volume': g_volume, 'battery': g_battery, 'brightness': g_brightness, 'bluetooth': g_bluetooth, 'usb': g_usb, 'ssh': g_ssh, 'pin': g_pin, 'close': g_close, 'left': g_left, 'right': g_right}
+          'wifi': g_wifi, 'down': g_down, 'up': g_up, 'volume': g_volume, 'battery': g_battery, 'brightness': g_brightness, 'bluetooth': g_bluetooth, 'usb': g_usb, 'ssh': g_ssh, 'pin': g_pin, 'close': g_close, 'power': g_power, 'restart': g_restart, 'sleep': g_sleep, 'left': g_left, 'right': g_right}
 
 # the application list of the mockups: name, glyph, glyph colour (palette only)
 APPS = {'browser': ('Browser', ACCENT), 'terminal': ('Terminal', OK), 'settings': ('Settings', GLYPH), 'game': ('Game mode', ACCENT),
@@ -460,7 +475,7 @@ def screen_more(f, wall):
     return c
 
 
-def screen_menu(f, wall):
+def screen_menu(f, wall, menu_selected='terminal', hints=(('A', 'Open'), ('X', 'Unpin'), ('Y', 'Search'), ('B', 'Back'))):
     c = desktop_base(f, wall); terminal_window(c)
     c.img.alpha_composite(Image.new('RGBA', (W, H), BG[:3] + (token('WISP_UI_MENU_SCRIM'),)))
     cols, cw, ch, tile, icon = token('WISP_UI_MENU_COLS'), token('WISP_UI_MENU_CELL_W'), token('WISP_UI_MENU_CELL_H'), token('WISP_UI_MENU_TILE'), token('WISP_UI_MENU_ICON')
@@ -468,7 +483,7 @@ def screen_menu(f, wall):
     c.text((left, token('WISP_UI_TITLE_Y')), 'Applications', f.title, TEXT)
     c.text((left, token('WISP_UI_SUBTITLE_Y')), 'Pick an app. X pins it to the dock.', f.small, DIM)
     order = ['browser', 'terminal', 'settings', 'game', 'images', 'monitor', 'about']
-    selected = 'terminal'
+    selected = menu_selected
     for i, app in enumerate(order):
         cx = token('WISP_UI_MENU_X') + (i % cols) * cw + cw // 2
         top = token('WISP_UI_MENU_Y') + (i // cols) * ch
@@ -478,7 +493,7 @@ def screen_menu(f, wall):
         if app in PINS: c.icon('pin', cx + tile / 2 - 11, top + 11, 14, FOCUS_DIM if sel else DIM)          # pinned to the dock
         c.text((cx, top + tile + 16), APPS[app][0], f.small, TEXT, 'mm')
     x = left
-    for key, label in (('A', 'Open'), ('X', 'Unpin'), ('Y', 'Search'), ('B', 'Back')):
+    for key, label in hints:
         x = c.key_pill(x, token('WISP_UI_HINT_Y'), key, label)
     return c
 
@@ -523,9 +538,15 @@ def qs_row(c, x0, x1, y, hh, glyph, label, value=None, sel=False, chevron=False,
         c.disc(sx + (29 if toggle else 11), mid, 8, FOCUS if (sel and toggle) else TEXT)
 
 
-def qs_footer(c, x0, y1, hints):
+def qs_footer(c, x0, y1, hints, power=None):
+    """The footer's hints at the left; with `power` (None, 'idle' or 'focus') the small power button at the right: A on it opens the Power submenu."""
     hx = x0 + 14
     for key, label in hints: hx = c.key_pill(hx, y1 - 34 + 4, key, label)
+    if power:
+        pw = token('WISP_UI_QS_W'); bx1 = x0 + pw - 12; by0 = y1 - 31
+        foc = power == 'focus'
+        c.rrect((bx1 - 40, by0, bx1, by0 + 26), RADIUS, FOCUS if foc else PANEL)
+        c.icon('power', bx1 - 20, by0 + 13, 18, FOCUS_FG if foc else GLYPH)
 
 
 QS_RH = token('WISP_UI_POPUP_ROW') + 6
@@ -535,7 +556,7 @@ def qs_list_height():
     return QS_RH * 6 + QS_RH + 10                       # six single rows and the SSH row, which has a second line
 
 
-def screen_quick(f, wall):
+def screen_quick(f, wall, sel_row=5, power='idle'):
     """Quick settings reduced to what is touched often; rows that lead somewhere (Wi-Fi, USB port) carry a chevron, and USB port opens a submenu in place."""
     c = desktop_base(f, wall); terminal_window(c); draw_dock(c, PINS, running=['terminal', 'images'], active='terminal', focus='status')
     x0, y0, x1, y1 = qs_panel(c, qs_list_height())
@@ -545,9 +566,14 @@ def screen_quick(f, wall):
             (QS_RH + 10, dict(glyph='ssh', label='SSH', value='wisp@192.0.2.17', toggle=True, two=True)), (QS_RH, dict(glyph='usb', label='USB port', value='Off', chevron=True)),
             (QS_RH, dict(glyph='battery', label='Battery', value='78 %  discharging', level=0.78))]
     for i, (hh, r) in enumerate(rows):
-        qs_row(c, x0, x1, y, hh, sel=i == 5, **r); y += hh
-    qs_footer(c, x0, y1, (('A', 'Change'), ('B', 'Close')))
+        qs_row(c, x0, x1, y, hh, sel=i == sel_row, **r); y += hh
+    qs_footer(c, x0, y1, (('A', 'Change'), ('B', 'Close')), power=power)
     return c
+
+
+def screen_quick_power_button(f, wall):
+    """The list with the pad on the small power button (Down from the USB port row skips the battery row and lands here); A opens the Power submenu."""
+    return screen_quick(f, wall, sel_row=None, power='focus')
 
 
 def screen_quick_submenu(f, wall):
@@ -571,7 +597,37 @@ def screen_quick_submenu(f, wall):
     return c
 
 
-SETTINGS_PAGES = [('Display', 'brightness'), ('Date & time', 'monitor'), ('Power', 'battery'), ('Connections', 'wifi'), ('About', 'about')]
+def screen_quick_power(f, wall, confirm=False):
+    """The same panel after A on the small power button: same size, same place, the content replaced by Sleep, Restart and Shut down; Restart and Shut down ask first; B (or the back row) returns to the list."""
+    c = desktop_base(f, wall); terminal_window(c); draw_dock(c, PINS, running=['terminal', 'images'], active='terminal', focus='status')
+    x0, y0, x1, y1 = qs_panel(c, qs_list_height())
+    y = y0 + 12
+    c.rrect((x0 + 10, y, x1 - 10, y + QS_RH - 6), RADIUS, PANEL)
+    c.icon('left', x0 + 28, y + (QS_RH - 6) // 2, 18, GLYPH); c.text((x0 + 50, y + (QS_RH - 6) // 2), 'Power', f.small_bold, TEXT, 'lm'); y += QS_RH
+    ch = QS_RH + QS_RH // 2
+    for i, (glyph, label, sub) in enumerate((('sleep', 'Sleep', 'screen off, session kept'), ('restart', 'Restart', 'close everything, start again'), ('power', 'Shut down', 'close everything, switch off'))):
+        sel = i == (1 if confirm else 0)
+        fg, dim = (FOCUS_FG, FOCUS_DIM) if (sel and not confirm) else (TEXT, DIM)
+        asking = confirm and i == 1
+        c.rrect((x0 + 10, y, x1 - 10, y + ch - 6), RADIUS, FOCUS if (sel and not confirm) else PANEL)
+        mid = y + (ch - 6) // 2
+        c.icon(glyph, x0 + 32, mid, 18, FOCUS_FG if (sel and not confirm) else GLYPH)
+        if asking:
+            c.text((x0 + 58, mid - 17), 'Restart?', f.small, TEXT, 'lm'); c.text((x0 + 58, mid - 1), 'Unsaved work is lost.', f.tiny, DIM, 'lm')
+            bw = 70; bx = x1 - 10 - 2 * bw - 14; by = mid + 9
+            c.rrect((bx, by, bx + bw, by + 18), RADIUS, FOCUS, ACCENT, 2); c.text((bx + bw / 2, by + 9), 'Cancel', f.tiny, FOCUS_FG, 'mm')
+            c.rrect((bx + bw + 6, by, bx + 2 * bw + 6, by + 18), RADIUS, LINE); c.text((bx + bw + 6 + bw / 2, by + 9), 'Restart', f.tiny, TEXT, 'mm')
+        else:
+            c.text((x0 + 58, mid - 8), label, f.small, fg, 'lm'); c.text((x0 + 58, mid + 11), sub, f.tiny, dim, 'lm')
+        y += ch
+    qs_footer(c, x0, y1, (('A', 'Choose'), ('B', 'Back')))
+    return c
+
+
+def screen_quick_power_confirm(f, wall): return screen_quick_power(f, wall, confirm=True)
+
+
+SETTINGS_PAGES = [('Display', 'brightness'), ('Date & time', 'monitor'), ('Connections', 'wifi'), ('About', 'about')]
 
 
 def settings_window(c, page, content):
@@ -621,7 +677,7 @@ def screen_settings_datetime(f, wall):
     settings_window(c, 'Date & time', content); return c
 
 
-SCREENS = {'desktop-empty': screen_empty, 'desktop-window': screen_window, 'dock-focus': screen_focus, 'dock-more': screen_more, 'apps-menu': screen_menu, 'quick-settings': screen_quick, 'quick-settings-submenu': screen_quick_submenu, 'osk': screen_osk, 'osk-symbols': screen_osk_symbols,
+SCREENS = {'desktop-empty': screen_empty, 'desktop-window': screen_window, 'dock-focus': screen_focus, 'dock-more': screen_more, 'apps-menu': screen_menu, 'quick-settings-power-button': screen_quick_power_button, 'quick-settings-power': screen_quick_power, 'quick-settings-power-confirm': screen_quick_power_confirm,  'quick-settings': screen_quick, 'quick-settings-submenu': screen_quick_submenu, 'osk': screen_osk, 'osk-symbols': screen_osk_symbols,
            'settings-display': screen_settings_display, 'settings-datetime': screen_settings_datetime}
 
 

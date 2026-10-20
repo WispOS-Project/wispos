@@ -172,6 +172,7 @@ class Rig:
                  'nmcli': 'echo "*:TestNet:80"', 'bluetoothctl': 'echo "No default controller available"',
                  'wisp-ssh': 'case "$1" in on|off) echo "$@" >> "%(d)s/ssh.log";; esac; echo "ssh: off"', 'wisp-usb': 'case "$1" in off|computer|host) echo "$@" >> "%(d)s/usb.log";; esac; echo "usb: off"',
                  'wisp-screen': 'case "$1" in timeout) case "$2" in status) echo 120;; *) echo "$2" >> "%(d)s/screen-timeout.log";; esac;; esac',
+                 'wisp-power': 'case "$1" in can-sleep) echo "sleep: yes";; *) echo "$1" >> "%(d)s/power.log";; esac',
                  'wisp-session-select': 'echo "$@" >> "%(d)s/session.log"', 'wisp-download-action': 'echo "$@" >> "%(d)s/download-action.log"'}
         for n, body in tools.items():
             p = self.tools / n; p.write_text('#!/bin/sh\n' + body % {'d': self.d} + '\n'); p.chmod(0o755)
@@ -627,6 +628,20 @@ class ShellTests(unittest.TestCase):
         self.rig.tap('esc'); self.rig.tap('esc')
         self.rig.wait(lambda: self.rig.state()['settings'] == '0' and self.rig.state()['panels'] == 'wisp-dock:720x44', 20, 'the window to close and its surface to go')
         self.rig.wait(lambda: c.lines().count('enter') == 2, 20, 'the terminal to get the keyboard back')
+
+    def test_the_power_submenu_of_the_quick_settings_asks_before_restart_and_hands_the_action_to_wisp_power(self):
+        self.rig.start_dock()
+        self.rig.ctl('qs')
+        self.rig.wait(lambda: self.rig.state()['dock'] == 'quick-settings', 20, 'the quick settings')
+        time.sleep(3)                                                 # the tools are asked when it opens: wisp-power can-sleep says yes, so Sleep is listed
+        for k in ('down',) * 6 + ('enter', 'down', 'enter'): self.rig.tap(k)   # five rows to USB, the power button (the battery row is skipped), A: the submenu on Sleep, down to Restart, A: the question
+        time.sleep(1.5)
+        log = self.rig.d / 'power.log'
+        self.assertFalse(log.exists(), 'asking is not doing: nothing reached wisp-power yet')
+        self.rig.tap('right'); self.rig.tap('enter')                  # Cancel -> Restart, A
+        self.rig.wait(lambda: log.exists() and log.read_text().strip(), 30, 'the action to reach wisp-power')
+        self.assertEqual(log.read_text().split(), ['restart'])
+        self.rig.wait(lambda: self.rig.state()['dock'] != 'quick-settings' and self.rig.state()['panels'] == 'wisp-dock:720x44', 20, 'the panel to leave')
 
 
 if __name__ == '__main__':

@@ -74,6 +74,8 @@ void ui_init(Ui *u, WdApps *apps, const ViewFonts *fonts)
     u->ocol = 4;
     u->sys.battery = -1.f;
     u->sys.screen_timeout = -1;
+    u->sys.sleep_ok = -1;
+    u->qs_confirm = -1;
     u->sys.volume = 0.5f;
     u->sys.brightness = 0.5f;
     snprintf(u->clock, sizeof u->clock, "--:--");
@@ -186,6 +188,8 @@ static void qs_open(Ui *u, bool from_pad)
     u->from_pad = from_pad;
     u->qs_sel = 0;
     u->qs_page = 0;
+    u->qs_confirm = -1;
+    u->qs_opt = 0;
     u->dragging = false;
     for (int i = 0; i < u->n; i++) if (u->items[i].kind == WD_STATUS) set_focus(u, i);
     eff(u, EFF_REFRESH, 0, 0, 0, 0, NULL);
@@ -342,9 +346,43 @@ static void menu_key(Ui *u, int code, const char *utf8, unsigned mods)
 }
 
 /* ------------------------------------------------------------------ the quick settings */
-enum { QS_PAGE_LIST = 0, QS_PAGE_USB = 1 };
-/* The battery row of the list is information; in the USB submenu the selectable rows are the back row and the three modes (the note under them is text). */
-static bool qs_selectable(const Ui *u, int row) { return u->qs_page == QS_PAGE_USB ? (row >= 0 && row <= 3) : (row >= 0 && row <= 5); }
+enum { QS_PAGE_LIST = 0, QS_PAGE_USB = 1, QS_PAGE_POWER = 2 };
+/* Power: Sleep (only where the kernel offers it), Restart and Shut down, through wisp-power; the last two ask first (issue #13). It is a submenu of the quick settings: the small power button
+ * at the footer's right opens it in place, B or its back row returns to the list with the button selected. */
+enum { POW_SLEEP, POW_RESTART, POW_SHUTDOWN };                                    /* also the argument of EFF_POWER */
+static int power_ids(const Ui *u, int ids[3])                                     /* the Power submenu's actions, in order */
+{
+    int n = 0;
+    if (u->sys.sleep_ok == 1) ids[n++] = POW_SLEEP;
+    ids[n++] = POW_RESTART;
+    ids[n++] = POW_SHUTDOWN;
+    return n;
+}
+static int power_row_id(const Ui *u, int row)                                     /* row 0 of the submenu is the back row; the actions follow */
+{
+    int ids[3]; int n = power_ids(u, ids);
+    return row >= 1 && row <= n ? ids[row - 1] : -1;
+}
+static void power_do(Ui *u, int id)                                               /* hand the action to the shell and leave: the system is about to change state */
+{
+    eff(u, EFF_POWER, id, 0, 0, 0, NULL);
+    dock_close(u);
+}
+/* The battery row of the list is information; in the USB submenu the selectable rows are the back row and the three modes (the note under them is text); in the Power submenu the back row and
+ * the actions. In the list the power button (QS_POWER_BTN) comes after the USB row. */
+static bool qs_selectable(const Ui *u, int row)
+{
+    int ids[3];
+    if (u->qs_page == QS_PAGE_USB) return row >= 0 && row <= 3;
+    if (u->qs_page == QS_PAGE_POWER) return row >= 0 && row <= power_ids(u, ids);
+    return (row >= 0 && row <= 5) || row == QS_POWER_BTN;
+}
+static int qs_step(const Ui *u, int from, int dir)                                  /* the next selectable row in a direction (the battery row is skipped), or `from` */
+{
+    int r = from + dir;
+    if (u->qs_page == QS_PAGE_LIST) { if (from == 5 && dir > 0) r = QS_POWER_BTN; else if (from == QS_POWER_BTN && dir < 0) r = 5; }
+    return qs_selectable(u, r) ? r : from;
+}
 static void qs_build(const Ui *u, QsRow rows[UI_QS_ROWS], char text[UI_QS_ROWS][64], Hint hints[2], QsView *out);
 
 static void qs_adjust(Ui *u, int dir)
@@ -364,6 +402,8 @@ static void qs_page_set(Ui *u, int page, int sel)
 {
     u->qs_page = page;
     u->qs_sel = sel;
+    u->qs_confirm = -1;
+    u->qs_opt = 0;
     u->dragging = false;
     dirty(u, DIRTY_DOCK);
 }
@@ -375,11 +415,24 @@ static void qs_change(Ui *u)                                                 /* 
         qs_page_set(u, QS_PAGE_LIST, 5);
         return;
     }
+    if (u->qs_page == QS_PAGE_POWER) {                                      /* the back row, or an action (the asking row's buttons: Cancel or the action) */
+        int id = power_row_id(u, u->qs_sel);
+        if (id < 0) { qs_page_set(u, QS_PAGE_LIST, QS_POWER_BTN); return; }
+        if (u->qs_confirm == id) {
+            if (u->qs_opt == 1) { power_do(u, id); return; }
+            u->qs_confirm = -1;
+            u->qs_opt = 0;
+        } else if (id == POW_SLEEP) { power_do(u, id); return; }              /* sleep loses nothing: no question */
+        else { u->qs_confirm = id; u->qs_opt = 0; }                           /* restart and shut down ask first, with Cancel under the pad */
+        dirty(u, DIRTY_DOCK);
+        return;
+    }
     switch (u->qs_sel) {
     case 0: eff(u, EFF_WIFI, 0, 0, 0, 0, NULL); break;
     case 1: if (u->sys.bt_available) { u->sys.bt_on = !u->sys.bt_on; eff(u, EFF_SET_BLUETOOTH, u->sys.bt_on, 0, 0, 0, NULL); } break;
     case 4: u->sys.ssh_on = !u->sys.ssh_on; eff(u, EFF_SET_SSH, u->sys.ssh_on, 0, 0, 0, NULL); break;
     case 5: qs_page_set(u, QS_PAGE_USB, 1 + clampi(u->sys.usb, 0, 2)); return;     /* the submenu opens with the current mode selected */
+    case QS_POWER_BTN: qs_page_set(u, QS_PAGE_POWER, 1); return;                     /* the Power submenu opens on its first action */
     default: break;
     }
     dirty(u, DIRTY_DOCK);
@@ -389,28 +442,42 @@ static void qs_key(Ui *u, int code)
 {
     switch (code) {
     case KEY_UP: case KEY_DOWN: {
-        int d = code == KEY_UP ? -1 : 1, r = u->qs_sel + d;
-        if (qs_selectable(u, r)) u->qs_sel = r;
+        int d = code == KEY_UP ? -1 : 1;
+        u->qs_sel = qs_step(u, u->qs_sel, d);
+        u->qs_confirm = -1;                                                  /* moving away from a question withdraws it */
+        u->qs_opt = 0;
         dirty(u, DIRTY_DOCK);
         break;
     }
-    case KEY_LEFT: if (u->qs_page == QS_PAGE_USB) qs_page_set(u, QS_PAGE_LIST, 5); else qs_adjust(u, -1); break;
-    case KEY_RIGHT: qs_adjust(u, 1); break;
+    case KEY_LEFT:
+        if (u->qs_page == QS_PAGE_USB) qs_page_set(u, QS_PAGE_LIST, 5);
+        else if (u->qs_page == QS_PAGE_POWER) { if (u->qs_confirm >= 0 && u->qs_opt == 1) { u->qs_opt = 0; dirty(u, DIRTY_DOCK); } else qs_page_set(u, QS_PAGE_LIST, QS_POWER_BTN); }
+        else qs_adjust(u, -1);
+        break;
+    case KEY_RIGHT:
+        if (u->qs_page == QS_PAGE_POWER) { if (u->qs_confirm >= 0) { u->qs_opt = 1; dirty(u, DIRTY_DOCK); } }
+        else qs_adjust(u, 1);
+        break;
     case KEY_ENTER: case KEY_KPENTER: qs_change(u); break;
-    case KEY_ESC: if (u->qs_page == QS_PAGE_USB) qs_page_set(u, QS_PAGE_LIST, 5); else panel_back(u); break;
+    case KEY_ESC:
+        if (u->qs_page == QS_PAGE_USB) qs_page_set(u, QS_PAGE_LIST, 5);
+        else if (u->qs_page == QS_PAGE_POWER) { if (u->qs_confirm >= 0) { u->qs_confirm = -1; u->qs_opt = 0; dirty(u, DIRTY_DOCK); } else qs_page_set(u, QS_PAGE_LIST, QS_POWER_BTN); }
+        else panel_back(u);
+        break;
     default: break;
     }
 }
 
 /* ------------------------------------------------------------------ the settings window */
 static void fmt_into(char *dst, size_t cap, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
-/* The pages that exist (each later page adds its rows here). Display: Screen timeout, the panel's blank timeout in `wisp-screen timeout` (the file the idle watcher reads). */
+/* The pages that exist (each later page adds its rows here). Display: Screen timeout, the panel's blank timeout in `wisp-screen timeout` (the file the idle watcher reads).
+ * Power is not a page: sleep, restart and shut down live in the quick settings' Power submenu (issue #13). */
 enum { SET_DISPLAY, SET_PAGES };
 static const char *const TIMEOUT_NAMES[6] = { "Never", "1 min", "2 min", "5 min", "10 min", "30 min" };
 static const int TIMEOUT_SECS[6] = { 0, 60, 120, 300, 600, 1800 };               /* 120 s is what the idle watcher uses until someone sets another */
 
-static int set_nrows(int page) { return page == SET_DISPLAY ? 1 : 0; }
-static int set_nopt(int page, int row) { (void)row; return page == SET_DISPLAY ? 6 : 0; }
+static int set_nrows(const Ui *u, int page) { (void)u; return page == SET_DISPLAY ? 1 : 0; }
+static int set_nopt(const Ui *u, int page, int row) { (void)u; (void)row; return page == SET_DISPLAY ? 6 : 0; }
 static int set_on(const Ui *u, int page, int row)                                 /* the option that applies, -1 when the value is none of them */
 {
     (void)row;
@@ -441,7 +508,7 @@ static void settings_close(Ui *u)
 
 static void set_enter(Ui *u)                                                      /* into the page's rows, on the option that applies */
 {
-    if (set_nrows(u->set_page) == 0) return;
+    if (set_nrows(u, u->set_page) == 0) return;
     int on = set_on(u, u->set_page, 0);
     u->set_in = true;
     u->set_row = 0;
@@ -451,11 +518,11 @@ static void set_enter(Ui *u)                                                    
 
 /* Which rows apply something when picked. Every row counted by set_nrows needs a case here and in set_apply: a click on a row that is not listed is ignored, so a row added
  * without its case cannot be selected and then do nothing. */
-static bool set_applies(int page, int row) { return page == SET_DISPLAY && row == 0; }
+static bool set_applies(const Ui *u, int page, int row) { (void)u; return page == SET_DISPLAY && row == 0; }
 
 static void set_apply(Ui *u)
 {
-    if (set_applies(u->set_page, u->set_row)) {
+    if (u->set_page == SET_DISPLAY && set_applies(u, u->set_page, u->set_row)) {
         int secs = TIMEOUT_SECS[clampi(u->set_opt, 0, 5)];
         if (secs != u->sys.screen_timeout) { u->sys.screen_timeout = secs; eff(u, EFF_SET_SCREEN_TIMEOUT, secs, 0, 0, 0, NULL); }
     }
@@ -465,11 +532,13 @@ static void set_apply(Ui *u)
 static void settings_key(Ui *u, int code, unsigned mods)
 {
     switch (code) {
-    case KEY_ESC: if (u->set_in) { u->set_in = false; dirty(u, DIRTY_SETTINGS); } else settings_close(u); break;
+    case KEY_ESC:
+        if (u->set_in) { u->set_in = false; dirty(u, DIRTY_SETTINGS); } else settings_close(u);
+        break;
     case KEY_TAB: u->set_page = clampi(u->set_page + ((mods & UI_SHIFT) ? -1 : 1), 0, SET_PAGES - 1); u->set_in = false; dirty(u, DIRTY_SETTINGS); break;     /* R2 / L2 */
     case KEY_UP: case KEY_DOWN: {
         int d = code == KEY_UP ? -1 : 1;
-        if (u->set_in) u->set_row = clampi(u->set_row + d, 0, set_nrows(u->set_page) - 1);
+        if (u->set_in) u->set_row = clampi(u->set_row + d, 0, set_nrows(u, u->set_page) - 1);
         else u->set_page = clampi(u->set_page + d, 0, SET_PAGES - 1);
         dirty(u, DIRTY_SETTINGS);
         break;
@@ -479,7 +548,7 @@ static void settings_key(Ui *u, int code, unsigned mods)
         break;
     case KEY_RIGHT:
         if (!u->set_in) set_enter(u);
-        else { u->set_opt = clampi(u->set_opt + 1, 0, set_nopt(u->set_page, u->set_row) - 1); dirty(u, DIRTY_SETTINGS); }
+        else { u->set_opt = clampi(u->set_opt + 1, 0, set_nopt(u, u->set_page, u->set_row) - 1); dirty(u, DIRTY_SETTINGS); }
         break;
     case KEY_ENTER: case KEY_KPENTER: if (u->set_in) set_apply(u); else set_enter(u); break;
     default: break;
@@ -489,7 +558,7 @@ static void settings_key(Ui *u, int code, unsigned mods)
 static void set_build(const Ui *u, SetPage pages[UI_SET_PAGES], SetRow rows[UI_SET_ROWS], char note[UI_SET_ROWS][64], Hint hints[3], SettingsView *out)
 {
     pages[SET_DISPLAY] = (SetPage){ "Display", "brightness", 0 };
-    int nrows = set_nrows(u->set_page);
+    int nrows = set_nrows(u, u->set_page);
     if (u->set_page == SET_DISPLAY) {
         int on = set_on(u, SET_DISPLAY, 0);
         if (on >= 0 || u->sys.screen_timeout < 0) fmt_into(note[0], 64, "Turn the screen off after no input");
@@ -510,7 +579,9 @@ static void pointer_settings(Ui *u, int x, int y, UiPtr ev, int button)
     set_build(u, pages, rows, note, hints, &sv);
     SetHit h = view_settings_hit(&sv, x, y);
     if (h.page >= 0) { u->set_page = h.page; u->set_in = false; dirty(u, DIRTY_SETTINGS); }
-    else if (h.row >= 0 && set_applies(u->set_page, h.row)) { u->set_in = true; u->set_row = h.row; u->set_opt = h.opt; set_apply(u); }
+    else if (h.row >= 0 && set_applies(u, u->set_page, h.row)) {
+        u->set_in = true; u->set_row = h.row; u->set_opt = h.opt; set_apply(u);
+    }
 }
 
 /* ------------------------------------------------------------------ the on-screen keyboard */
@@ -690,7 +761,11 @@ static void pointer_dock(Ui *u, int x, int y, UiPtr ev, int button)
             if (h.row >= 0 && qs_selectable(u, h.row)) {
                 u->qs_sel = h.row;
                 if (u->qs_page == QS_PAGE_USB) qs_change(u);
-                else if (h.row == 2 || h.row == 3) {
+                else if (u->qs_page == QS_PAGE_POWER) {
+                    int id = power_row_id(u, h.row);
+                    if (u->qs_confirm == id && id >= 0) { if (h.opt >= 0) { u->qs_opt = h.opt; qs_change(u); } }  /* only the asking row's two buttons answer */
+                    else qs_change(u);                                                                           /* any other row replaces the question with its own */
+                } else if (h.row == 2 || h.row == 3) {
                     u->dragging = true;
                     if (h.row == 2) { u->sys.volume = h.frac; eff(u, EFF_SET_VOLUME, 0, 0, 0, h.frac, NULL); }
                     else { u->sys.brightness = clampf(h.frac, BRIGHTNESS_MIN, 1.f); eff(u, EFF_SET_BRIGHTNESS, 0, 0, 0, u->sys.brightness, NULL); }
@@ -911,11 +986,28 @@ static void qs_build(const Ui *u, QsRow rows[UI_QS_ROWS], char text[UI_QS_ROWS][
     if (s->battery >= 0.f) fmt_into(text[6], 64, "%d %%  %s", (int)(s->battery * 100.f + 0.5f), s->charging ? "charging" : "discharging");
     else fmt_into(text[6], 64, "No battery");
     rows[6] = (QsRow){ QS_TEXT, "battery", 0, "Battery", text[6], false, s->battery < 0.f ? 0.f : s->battery };
-    QsView list = { rows, UI_QS_ROWS, u->qs_sel, hints, 2, 0 };
+    QsView list = { rows, UI_QS_ROWS, u->qs_sel, hints, 2, 0, u->qs_sel == QS_POWER_BTN ? 2 : 1 };
     if (u->qs_page == QS_PAGE_LIST) {
         hints[0] = (Hint){ "A", "Change" };
         hints[1] = (Hint){ "B", "Close" };
         *out = list;
+        return;
+    }
+    if (u->qs_page == QS_PAGE_POWER) {                                       /* same size and place as the list: nothing moves when it opens */
+        static const char *const TITLES[3] = { "Sleep", "Restart", "Shut down" };
+        static const char *const GLYPHS[3] = { "sleep", "restart", "power" };
+        static const char *const NOTES[3] = { "screen off, session kept", "close everything, start again", "close everything, switch off" };
+        int height = view_quick_height(&list), n = 1;
+        rows[0] = (QsRow){ QS_BACK, NULL, 0, "Power", NULL, false, 0 };
+        int ids[3], na = power_ids(u, ids);
+        for (int k = 0; k < na; k++, n++) {
+            int id = ids[k];
+            rows[n] = id == u->qs_confirm ? (QsRow){ QS_ASK, GLYPHS[id], u->qs_opt, TITLES[id], "Unsaved work is lost.", false, 0 }
+                                          : (QsRow){ QS_ACTION, GLYPHS[id], 0, TITLES[id], NOTES[id], false, 0 };
+        }
+        hints[0] = (Hint){ "A", "Choose" };
+        hints[1] = (Hint){ "B", "Back" };
+        *out = (QsView){ rows, n, u->qs_sel, hints, 2, height, 0 };
         return;
     }
     int height = view_quick_height(&list);                                   /* the submenu keeps the list's size and place: nothing moves when it opens */
@@ -924,7 +1016,7 @@ static void qs_build(const Ui *u, QsRow rows[UI_QS_ROWS], char text[UI_QS_ROWS][
     rows[4] = (QsRow){ QS_NOTE, NULL, 0, "Off again at every boot.", NULL, false, 0 };
     hints[0] = (Hint){ "A", "Choose" };
     hints[1] = (Hint){ "B", "Back" };
-    *out = (QsView){ rows, 5, u->qs_sel, hints, 2, height };
+    *out = (QsView){ rows, 5, u->qs_sel, hints, 2, height, 0 };
 }
 
 void ui_make_views(const Ui *u, UiViews *vw)

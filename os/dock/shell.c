@@ -99,7 +99,7 @@ typedef struct Top {
 
 typedef struct Job Job;
 struct Job { pid_t pid; int fd; char out[4096]; size_t len; int tag; };
-enum { J_VOLUME, J_WIFI, J_BT, J_SSH, J_USB, J_TIMEOUT, J_VOLSET, J_FIRE };
+enum { J_VOLUME, J_WIFI, J_BT, J_SSH, J_USB, J_TIMEOUT, J_SLEEP, J_VOLSET, J_FIRE };
 #define JOBS 10
 
 static struct {
@@ -290,12 +290,14 @@ static void refresh_slow(void)
     static const char *const ssh[] = { "wisp-ssh", "status", NULL };
     static const char *const usb[] = { "wisp-usb", "status", NULL };
     static const char *const timeout[] = { "wisp-screen", "timeout", "status", NULL };
+    static const char *const can_sleep[] = { "wisp-power", "can-sleep", NULL };
     job_start(J_VOLUME, volume);
     job_start(J_WIFI, wifi);
     job_start(J_BT, bt);
     job_start(J_SSH, ssh);
     job_start(J_USB, usb);
     job_start(J_TIMEOUT, timeout);
+    job_start(J_SLEEP, can_sleep);
 }
 
 static void job_done(Job *j, int status)
@@ -308,6 +310,7 @@ static void job_done(Job *j, int status)
     case J_BT: sys_parse_bluetooth(j->out, &s->bt_available, &s->bt_on); break;
     case J_SSH: sys_parse_ssh(j->out, &s->ssh_on, s->ssh_addr, sizeof s->ssh_addr); break;
     case J_USB: { int m = sys_parse_usb(j->out); if (m >= 0) s->usb = m; break; }
+    case J_SLEEP: { int v = sys_parse_can_sleep(j->out); if (v >= 0) s->sleep_ok = v; S.ui.dirty |= DIRTY_SETTINGS; break; }
     case J_TIMEOUT: { int t = sys_parse_screen_timeout(j->out); if (t >= 0) s->screen_timeout = t; S.ui.dirty |= DIRTY_SETTINGS; break; }
     default: break;
     }
@@ -771,6 +774,7 @@ static void run_effects(void)
             case EFF_SET_BLUETOOTH: { const char *const a[] = { "bluetoothctl", "power", f->a ? "on" : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
             case EFF_SET_SSH: { const char *const a[] = { "wisp-ssh", f->a ? "on" : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
             case EFF_SET_SCREEN_TIMEOUT: { char n[16]; snprintf(n, sizeof n, "%d", f->a); const char *const a[] = { "wisp-screen", "timeout", f->a > 0 ? n : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }       /* as for the other settings: read it back only after it was written */
+            case EFF_POWER: spawn_cmd("wisp-power", f->a == 0 ? "sleep" : f->a == 1 ? "restart" : "shutdown", NULL); break;
             case EFF_SET_USB: { const char *const a[] = { "wisp-usb", f->a == 0 ? "off" : f->a == 1 ? "computer" : "host", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
             case EFF_WIFI: ui_toast(&S.ui, "Wi-Fi networks", "Choose one in Game mode: Settings, Internet.", 5000); break;
             case EFF_REFRESH: refresh_fast(); refresh_slow(); break;

@@ -71,8 +71,9 @@ void view_menu(const Vctx *v, const MenuView *m);
 int  view_menu_hit(const MenuView *m, int px, int py);                                  /* the entry whose cell (tile and name) holds the point, or -1 */
 
 /* ------------------------------------------------------------------ the quick settings */
-typedef enum { QS_TEXT, QS_SWITCH, QS_SLIDER, QS_LINK, QS_BACK, QS_CHOICE, QS_NOTE } QsKind;
+typedef enum { QS_TEXT, QS_SWITCH, QS_SLIDER, QS_LINK, QS_BACK, QS_CHOICE, QS_NOTE, QS_ACTION, QS_ASK } QsKind;
 /* QS_LINK: a row that opens a submenu: label, the current value at the right and a chevron. QS_BACK: the first row of a submenu: a left chevron and the title in bold (label).
+ * QS_ACTION: a row of the Power submenu: glyph, label and a second line (value). QS_ASK: the same row asking first: "<label>?", the note (value) and two buttons, Cancel and <label>; `level` is the focused one (0 Cancel, 1 the action).
  * QS_CHOICE: a row of a submenu: label, a second line (value) and a mark at the right when `on`. QS_NOTE: a line of small text on no row (label); it is never selected. */
 typedef struct {
     QsKind kind;
@@ -83,11 +84,12 @@ typedef struct {
     bool on;                    /* SWITCH */
     float slider;               /* SLIDER 0..1; for the battery glyph, the charge 0..1 */
 } QsRow;
-typedef struct { const QsRow *rows; int n, selected; const Hint *hints; int nhints; int height; } QsView;   /* height: the panel's height when it must not follow its rows (a submenu keeps the list's size), else 0 */
+typedef struct { const QsRow *rows; int n, selected; const Hint *hints; int nhints; int height; int power_btn; } QsView;   /* power_btn: the small power button at the footer's right: 0 none, 1 shown, 2 shown and focused */   /* height: the panel's height when it must not follow its rows (a submenu keeps the list's size), else 0 */
 int  view_quick_height(const QsView *q);              /* the panel's height */
 void view_quick(const Vctx *v, const QsView *q);      /* above the strip's right end */
 VRect view_quick_rect(const QsView *q);
-typedef struct { int row; float frac; } QsHit;   /* row: -1 outside the panel, -2 on it but on no row; frac: 0..1 along a slider's track */
+#define QS_POWER_BTN 7                                 /* the selection / hit index of the power button (the list has rows 0..6) */
+typedef struct { int row; float frac; int opt; } QsHit;   /* row: -1 outside the panel, -2 on it but on no row, QS_POWER_BTN on the power button; frac: 0..1 along a slider's track; opt: on a QS_ASK row the button under the point (0 Cancel, 1 the action), else -1 */
 QsHit view_quick_hit(const QsView *q, int px, int py);
 
 /* ------------------------------------------------------------------ the settings panel */
