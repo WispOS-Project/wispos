@@ -1080,6 +1080,41 @@ class CheckRootfsTests(unittest.TestCase):
         session = (HERE / 'rootfs/usr/bin/wisp-steam-session').read_text()
         self.assertIn('wisp-steam-seed', session); self.assertLess(session.index('wisp-steam-seed'), session.index('steamrtarm64/steam" -gamepadui'))
 
+    def test_apps_steam_maps_to_valves_proton_get_our_tool_through_per_app_entries(self):
+        # 2026-10-20 (#36): Steam resolves the tool PER APPID; the global "0" default never beats Steam's own per-app mapping (priority 85 to proton-stable), so Counter-Strike and
+        # Quake III ran Valve's stock Proton, which hangs in wineboot on the A53. The seed adds a per-app entry at SEED_PRIORITY for every app Steam's compat log shows mapped to a Proton tool.
+        import importlib.machinery, importlib.util, os, tempfile
+        path = str(HERE / 'rootfs/usr/bin/wisp-steam-seed')
+        spec = importlib.util.spec_from_loader('wisp_steam_seed2', importlib.machinery.SourceFileLoader('wisp_steam_seed2', path))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        custom = m.CUSTOM_TOOL
+        log = ('Recording non-user mapping for 10 at priority 85 to tool proton-stable\nRecording non-user mapping for 5 at priority 75 to tool native\n'
+               'Recording non-user mapping for 7 at priority 100 to tool proton-experimental\nRecording non-user mapping for 10 at priority 85 to tool proton-stable\n'
+               'Recording non-user mapping for 9 at priority 90 to tool SteamLinuxRuntime_sniper\n')
+        self.assertEqual(m.mapped_apps([log]), [7, 10])                                       # Proton tools only, no repeats; native and Valve's runtimes stay as Steam has them
+        base, _ = m.seed('', custom)
+        text, n = m.seed_apps(base, [10, 7, 10], custom)
+        self.assertEqual(n, 2)
+        for app in ('7', '10'): self.assertEqual(text.count('"%s"\n' % app), 1); self.assertIn('"%s"\n' % app, text)
+        self.assertEqual(m.seed_apps(text, [10, 7], custom), (text, 0))                       # idempotent
+        # a person's own choice for an app (Steam's settings write priority 250 over the same key) is never touched
+        mine = text.replace('"10"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"%s"' % custom, '"10"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"GE-Proton"')
+        self.assertIn('GE-Proton', mine); self.assertEqual(m.seed_apps(mine, [10], custom), (mine, 0))
+        self.assertEqual(m.seed_apps('"x"\n{\n}\n', [10], custom), ('"x"\n{\n}\n', 0))     # no CompatToolMapping block: nothing invented
+        # end to end: the custom tool installed -> entries added from the logs next to config.vdf; Valve's tool alone -> none
+        root = Path(tempfile.mkdtemp(prefix='wispos-seed-', dir=os.environ.get('TMPDIR')))
+        steam = root / 'steam'; (steam / 'compatibilitytools.d' / custom).mkdir(parents=True); (steam / 'compatibilitytools.d' / custom / 'compatibilitytool.vdf').write_text('x')
+        cfg = root / 'home' / 'config' / 'config.vdf'; cfg.parent.mkdir(parents=True); (root / 'home' / 'logs').mkdir()
+        (root / 'home' / 'logs' / 'compat_log.txt').write_text(log)
+        (root / 'home' / 'logs' / 'compat_log.previous.txt').write_text('Recording non-user mapping for 42 at priority 85 to tool proton-stable\n')
+        self.assertEqual(m.main([str(cfg), str(steam)]), 0)
+        out = cfg.read_text()
+        for app in ('7', '10', '42'): self.assertIn('"%s"\n' % app, out)
+        self.assertNotIn('"5"\n', out)
+        cfg2 = root / 'home2' / 'config' / 'config.vdf'; cfg2.parent.mkdir(parents=True); (root / 'home2' / 'logs').mkdir(); (root / 'home2' / 'logs' / 'compat_log.txt').write_text(log)
+        self.assertEqual(m.main([str(cfg2), str(root / 'empty-steam')]), 0)
+        self.assertNotIn('"10"\n', cfg2.read_text())
+
     def test_games_launched_by_steam_get_the_fallback_ahead_of_the_overlay_in_every_process(self):
         # 2026-10-09: Steam-launched games never started on the handheld. Steam preloads "<fallback>:<overlay>:~/.steam/bin32/gameoverlayrenderer.so:<overlay>" into the
         # launch shell and the pressure-vessel container; libraries initialise in reverse order, so the overlay's constructors (LSE atomics, SIGILL on the Cortex-A53)

@@ -10,6 +10,7 @@ rootfs and graphics provider this image does not have; docs/WISPOS-NOTES.md, Wor
 What it does: in config.vdf, InstallConfigStore/Software/Valve/Steam/CompatToolMapping, add the global entry "0" = proton-stable if there is no entry "0". An existing
 "0" entry (the user's own choice in Steam's settings) is never touched. Everything else in the file is left as it is (text edit, not a rewrite). If no config.vdf
 exists yet (first start) a minimal one is written; Steam fills in the rest.
+Third job (issue #36): per-app mappings. Steam resolves the tool PER APPID and the global "0" default never beats a per-app mapping (measured 2026-10-19/20: Counter-Strike and Quake III ran Valve's stock Proton, which hangs in wineboot on this CPU). With the custom tool installed, an entry "<AppID>" = custom tool at SEED_PRIORITY is added for every app Steam's own compat log shows mapped to proton-stable/proton-experimental. Priorities compete only inside one AppID: 200 beats Steam's 85, and a person's own choice (250, written by Steam's settings over the same key) wins; an existing entry is never touched. Known limit: an app first seen while Steam runs is covered from the next start.
 Second job, the SteamOS UI scale (operator decision 2026-10-15: "150 %" = his own 9-notch hand pick, ScaleFactor 0.842373907566070557 = 1.45 x Steam's auto value on this panel; Steam's
 control shows no percentage): Steam stores a manual UI scale as a per-display block under InstallConfigStore/UI/display, named "<display>|||<mode>" ("External: DSI-1 3\"|||Fullscreen-720x480"
 on this device), holding ScaleFactor; its mere presence switches "Automatically Scale User Interface" off and Steam mirrors the value into display/Current. The seed adds that block when
@@ -122,6 +123,54 @@ def seed(text, tool='proton-stable'):
     return ''.join(lines), 'seeded'
 
 
+# Apps whose per-app mapping Steam itself records (compat_log.txt: "Recording non-user mapping for N at priority P to tool T") for tools that run Windows games through Proton.
+# `native` (Linux builds) and Valve's runtimes are not Windows-through-Proton choices and stay as Steam has them.
+PROTON_TOOLS = ('proton-stable', 'proton-experimental')
+MAPPING_RE = re.compile(r'Recording non-user mapping for (\d+) at priority \d+ to tool ([A-Za-z0-9_.-]+)')
+
+
+def mapped_apps(log_texts):
+    """Sorted AppIDs that Steam's own mapping sends to one of PROTON_TOOLS, read from the compat log text(s)."""
+    ids = set()
+    for text in log_texts:
+        for m in MAPPING_RE.finditer(text):
+            if m.group(2) in PROTON_TOOLS: ids.add(int(m.group(1)))
+    return sorted(ids)
+
+
+def seed_apps(text, ids, tool):
+    """(new text, count): an entry "<AppID>" = `tool` at SEED_PRIORITY for every id that has none in CompatToolMapping. An existing entry (a person's own choice in Steam's settings,
+    or ours from an earlier start) is never touched. Needs the CompatToolMapping block to exist (seed() creates it); otherwise (text, 0)."""
+    lines = text.splitlines(True)
+    ics = find_block(lines, 'InstallConfigStore')
+    if ics is None: return text, 0
+    steam = ics
+    here = (ics[1] + 1, ics[2])
+    for name in ('Software', 'Valve', 'Steam'):
+        b = find_block(lines, name, *here)
+        if b is None: return text, 0
+        here = (b[1] + 1, b[2]); steam = b
+    cm = find_block(lines, 'CompatToolMapping', steam[1] + 1, steam[2])
+    if cm is None: return text, 0
+    ckey, cop, ccl = cm
+    depth = len(lines[ckey]) - len(lines[ckey].lstrip('\t')) + 1
+    have = {lines[b[0]].strip().strip('"') for b in child_blocks(lines, cop, ccl)}
+    new = [i for i in sorted(set(ids)) if str(i) not in have]
+    if not new: return text, 0
+    lines[ccl:ccl] = [indent(entry(tool).replace('"0"', '"%d"' % i, 1), depth) for i in new]
+    return ''.join(lines), len(new)
+
+
+def read_logs(config_path):
+    base = os.path.join(os.path.dirname(os.path.dirname(config_path)), 'logs')
+    out = []
+    for name in ('compat_log.previous.txt', 'compat_log.txt'):
+        try:
+            with open(os.path.join(base, name), encoding='utf-8', errors='replace') as f: out.append(f.read())
+        except OSError: pass
+    return out
+
+
 UI_SCALE_DISPLAY = 'External: DSI-1 3"|||Fullscreen-720x480'     # Steam's name for this panel in its normal Game-mode start (measured 2026-10-15)
 UI_SCALE = '0.842373907566070557'
 
@@ -180,13 +229,16 @@ def main(argv):
     new, scale = seed_ui_scale(new)
     if scale == 'unrecognised':
         print('wisp-steam-seed: %s has no InstallConfigStore for the UI scale; left alone' % path); scale = 'present'
-    if status in ('seeded', 'upgraded') or scale == 'seeded':
+    apps = 0
+    if tool == CUSTOM_TOOL:                     # only our own tool is worth steering games to; Valve's proton-stable is already what Steam picks
+        new, apps = seed_apps(new, mapped_apps(read_logs(path)), tool)
+    if status in ('seeded', 'upgraded') or scale == 'seeded' or apps:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         mode = os.stat(path).st_mode & 0o777 if os.path.exists(path) else 0o644
         tmp = path + '.wisp-seed'
         with open(tmp, 'w', encoding='utf-8') as f: f.write(new)
         os.chmod(tmp, mode); os.replace(tmp, path)
-    print('wisp-steam-seed: default compatibility tool %s; UI scale %s' % ({'seeded': 'set to ' + tool, 'upgraded': 'moved to ' + tool}.get(status, 'already chosen'), 'seeded' if scale == 'seeded' else 'already chosen'))
+    print('wisp-steam-seed: default compatibility tool %s; UI scale %s' % ({'seeded': 'set to ' + tool, 'upgraded': 'moved to ' + tool}.get(status, 'already chosen'), 'seeded' if scale == 'seeded' else 'already chosen') + '; per-app mappings added: %d' % apps)
     return 0
 
 
