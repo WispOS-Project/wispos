@@ -246,13 +246,15 @@ int view_menu_hit(const MenuView *m, int px, int py)
 static int qs_row_height(const QsRow *r)
 {
     int rh = WISP_UI_POPUP_ROW + 6;
-    if (r->kind == QS_SEGMENTS) return rh + 40;
     if (r->kind == QS_SWITCH && r->value) return rh + 10;
+    if (r->kind == QS_CHOICE) return rh + rh / 2;
+    if (r->kind == QS_NOTE) return 30;
     return rh;
 }
 
 int view_quick_height(const QsView *q)
 {
+    if (q->height > 0) return q->height;
     int h = 12 + 34 + 6;
     for (int i = 0; i < q->n; i++) h += qs_row_height(&q->rows[i]);
     return h;
@@ -268,21 +270,17 @@ QsHit view_quick_hit(const QsView *q, int px, int py)
 {
     const int pw = WISP_UI_QS_W;
     VRect r = view_quick_rect(q);
-    QsHit none = { -1, 0, 0.f };
+    QsHit none = { -1, 0.f };
     if (px < r.x0 || px >= r.x1 || py < r.y0 || py >= r.y1) return none;
     none.row = -2;
     int y = r.y0 + 12;
     for (int i = 0; i < q->n; i++) {
         int hh = qs_row_height(&q->rows[i]);
-        if (py >= y && py < y + hh - 6 && px >= r.x0 + 10 && px < r.x0 + pw - 10) {
-            QsHit h = { i, 0, 0.f };
+        if (q->rows[i].kind != QS_NOTE && py >= y && py < y + hh - 6 && px >= r.x0 + 10 && px < r.x0 + pw - 10) {
+            QsHit h = { i, 0.f };
             if (q->rows[i].kind == QS_SLIDER) {
                 float t = (float)(px - (r.x0 + 62)) / (float)(pw - 28 - 62);
                 h.frac = t < 0.f ? 0.f : t > 1.f ? 1.f : t;
-            } else if (q->rows[i].kind == QS_SEGMENTS) {
-                float seg_w = (float)(pw - 20 - 20) / 3.f;
-                int k = (int)((float)(px - (r.x0 + 20)) / seg_w);
-                h.part = k < 0 ? 0 : k > q->rows[i].nseg - 1 ? q->rows[i].nseg - 1 : k;
             }
             return h;
         }
@@ -302,9 +300,27 @@ void view_quick(const Vctx *v, const QsView *q)
         const QsRow *r = &q->rows[i];
         int hh = qs_row_height(r);
         bool sel = i == q->selected;
+        if (r->kind == QS_NOTE) {
+            rd_text(v->c, v->f->tiny, IX(v, x0 + 18), IY(v, y + 6), r->label, DIM, RD_LEFT, RD_MIDDLE);
+            y += hh;
+            continue;
+        }
         rd_rrect(v->c, X(v, x0 + 10), Y(v, y), X(v, x0 + pw - 10), Y(v, y + hh - 6), WISP_UI_RADIUS, sel ? FOCUS : PANEL);
         RdColor fg = sel ? FOCUS_FG : TEXT, dim = sel ? FOCUS_DIM : DIM;
-        int top = r->kind == QS_SEGMENTS ? y + 21 : y + (hh - 6) / 2;
+        int top = y + (hh - 6) / 2;
+        if (r->kind == QS_BACK) {
+            view_glyph(v, "left", 0, 18, (float)(x0 + 28), (float)top, sel ? FOCUS_FG : GLYPHC);
+            rd_text(v->c, v->f->small_bold, IX(v, x0 + 50), IY(v, top), r->label, fg, RD_LEFT, RD_MIDDLE);
+            y += hh;
+            continue;
+        }
+        if (r->kind == QS_CHOICE) {
+            rd_text(v->c, v->f->small, IX(v, x0 + 36), IY(v, top - 8), r->label, fg, RD_LEFT, RD_MIDDLE);
+            if (r->value) rd_text_fit(v->c, v->f->tiny, IX(v, x0 + 36), IY(v, top + 11), pw - 36 - 56, r->value, dim, RD_LEFT, RD_MIDDLE);
+            rd_disc(v->c, X(v, x0 + pw - 34), Y(v, top), 8.f, r->on ? (sel ? FOCUS_FG : ACCENT) : BG);       /* the mode that is on has a filled mark, the others a dark one */
+            y += hh;
+            continue;
+        }
         if (r->glyph && strcmp(r->glyph, "battery") == 0) battery(v, 18, (float)(x0 + 32), (float)top, sel ? FOCUS_FG : GLYPHC, r->slider);
         else view_glyph(v, r->glyph, r->level, 18, (float)(x0 + 32), (float)top, sel ? FOCUS_FG : GLYPHC);
         if (r->kind == QS_SLIDER) {
@@ -321,16 +337,9 @@ void view_quick(const Vctx *v, const QsView *q)
                 int sx = x0 + pw - 28 - WISP_UI_SWITCH_W;
                 rd_pill(v->c, X(v, sx), Y(v, top - 11), X(v, sx + WISP_UI_SWITCH_W), Y(v, top + 11), r->on ? (sel ? FOCUS_OK : OK) : LINE);
                 rd_disc(v->c, X(v, sx + (r->on ? 29 : 11)), Y(v, top), 8.f, (sel && r->on) ? FOCUS : TEXT);
-            } else if (r->kind == QS_SEGMENTS) {
-                int sy = top + 16;
-                float seg_w = (float)(pw - 20 - 20) / 3.f;
-                for (int k = 0; k < r->nseg && k < 3; k++) {
-                    float sx = (float)(x0 + 20) + (float)k * seg_w;
-                    bool on = k == r->seg_on;
-                    rd_rrect(v->c, X(v, 0) + sx, Y(v, sy), X(v, 0) + sx + seg_w - 3.f, Y(v, sy + WISP_UI_SEGMENT_H), WISP_UI_RADIUS, on ? TEXT : BG);
-                    rd_text(v->c, v->f->tiny, (int)floorf(X(v, 0) + sx + (seg_w - 3.f) / 2.f + 0.5f), IY(v, sy + 13), r->seg[k], on ? FOCUS_FG : DIM, RD_CENTER, RD_MIDDLE);
-                }
-                if (r->note) rd_text(v->c, v->f->tiny, IX(v, x0 + pw - 22), IY(v, top), r->note, dim, RD_RIGHT, RD_MIDDLE);
+            } else if (r->kind == QS_LINK) {
+                if (r->value) rd_text_fit(v->c, v->f->tiny, IX(v, x0 + pw - 40), IY(v, top), pw - 62 - 40 - 28, r->value, dim, RD_RIGHT, RD_MIDDLE);
+                view_glyph(v, "right", 0, 18, (float)(x0 + pw - 28), (float)top, sel ? FOCUS_FG : DIM);
             } else if (r->value) {
                 rd_text_fit(v->c, v->f->tiny, IX(v, x0 + pw - 22), IY(v, top), pw - 62 - 22 - 70, r->value, dim, RD_RIGHT, RD_MIDDLE);
             }

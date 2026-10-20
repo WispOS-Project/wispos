@@ -110,20 +110,32 @@ int main(int argc, char **argv)
         for (int i = 0; i < 7; i++) e[i] = (MenuEntry){ spec(ids[i]), names[i], i < 3 };
         MenuView m = { e, 7, 1, 0, "Applications", "Pick an app. X pins it to the dock.", H_MENU, 4, NULL };
         view_menu(&v, &m);
-    } else if (!strcmp(scene, "quick-settings")) {
+    } else if (!strcmp(scene, "quick-settings") || !strcmp(scene, "quick-settings-submenu")) {
         dock_build(&d, &f, argv[3], true);
         draw_dock(&v, &d, find_key(&d, "status"), false);
         QsRow rows[] = {
-            { QS_TEXT, "wifi", 3, "Wi-Fi", "Home-WiFi-5G", false, 0, { 0 }, 0, 0, NULL },
-            { QS_SWITCH, "bluetooth", 0, "Bluetooth", NULL, false, 0, { 0 }, 0, 0, NULL },
-            { QS_SLIDER, "volume", 2, "Volume", NULL, false, 0.62f, { 0 }, 0, 0, NULL },
-            { QS_SLIDER, "brightness", 0, "Brightness", NULL, false, 0.40f, { 0 }, 0, 0, NULL },
-            { QS_SWITCH, "ssh", 0, "SSH", "wisp@192.0.2.17", true, 0, { 0 }, 0, 0, NULL },
-            { QS_SEGMENTS, "usb", 0, "USB port", NULL, false, 0, { "Off", "Computer", "Host" }, 3, 0, "off at every boot" },
-            { QS_TEXT, "battery", 0, "Battery", "78 %  discharging", false, 0.78f, { 0 }, 0, 0, NULL },
+            { QS_LINK, "wifi", 3, "Wi-Fi", "Home-WiFi-5G", false, 0 },
+            { QS_SWITCH, "bluetooth", 0, "Bluetooth", NULL, false, 0 },
+            { QS_SLIDER, "volume", 2, "Volume", NULL, false, 0.62f },
+            { QS_SLIDER, "brightness", 0, "Brightness", NULL, false, 0.40f },
+            { QS_SWITCH, "ssh", 0, "SSH", "wisp@192.0.2.17", true, 0 },
+            { QS_LINK, "usb", 0, "USB port", "Off", false, 0 },
+            { QS_TEXT, "battery", 0, "Battery", "78 %  discharging", false, 0.78f },
         };
-        QsView q = { rows, 7, 4, H_QS, 2 };
-        view_quick(&v, &q);
+        QsView list = { rows, 7, 5, H_QS, 2, 0 };
+        if (!strcmp(scene, "quick-settings")) view_quick(&v, &list);
+        else {
+            QsRow sub[] = {
+                { QS_BACK, NULL, 0, "USB port", NULL, false, 0 },
+                { QS_CHOICE, NULL, 0, "Off", "port unpowered, no data", true, 0 },
+                { QS_CHOICE, NULL, 0, "Computer", "the handheld is a device", false, 0 },
+                { QS_CHOICE, NULL, 0, "Host", "powers a connected device", false, 0 },
+                { QS_NOTE, NULL, 0, "Off again at every boot.", NULL, false, 0 },
+            };
+            Hint hints[] = { { "A", "Choose" }, { "B", "Back" } };
+            QsView q = { sub, 5, 1, hints, 2, view_quick_height(&list) };
+            view_quick(&v, &q);
+        }
     } else if (!strcmp(scene, "osk") || !strcmp(scene, "osk-symbols")) {
         OskView o = { OSK_LOWER, false, false, 2, 4 };
         if (!strcmp(scene, "osk-symbols")) o = (OskView){ OSK_SYMBOLS, false, false, 3, 6 };
