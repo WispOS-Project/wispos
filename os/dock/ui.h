@@ -19,6 +19,8 @@
 #define UI_EFFECTS 64
 #define UI_QS_ROWS 7
 #define UI_ACTIONS 8
+#define UI_SET_PAGES 8                  /* room for the pages of the Settings window */
+#define UI_SET_ROWS 6
 
 typedef enum {
     EFF_LAUNCH,             /* a = index into the application list */
@@ -34,6 +36,7 @@ typedef enum {
     EFF_SET_BLUETOOTH,      /* a = 1 on */
     EFF_SET_SSH,            /* a = 1 on */
     EFF_SET_USB,            /* a = 0 off, 1 computer, 2 host */
+    EFF_SET_SCREEN_TIMEOUT, /* a = seconds without input before the panel blanks, 0 never */
     EFF_WIFI,               /* open the Wi-Fi chooser */
     EFF_REFRESH,            /* the quick settings opened: read the system values again */
     EFF_BROWSER_ACTIONS,    /* Select in the browser layer: the list of browser actions */
@@ -43,10 +46,10 @@ typedef enum {
 typedef struct { UiEffKind kind; int a, b, c; float f; char s[WD_ID]; } UiEffect;
 
 typedef enum { UI_IDLE, UI_SUMMONED, UI_ACTIONS_OPEN, UI_QS } UiDock;
-typedef enum { SURF_DOCK, SURF_MENU, SURF_OSK, SURF_TOAST } UiSurf;
+typedef enum { SURF_DOCK, SURF_MENU, SURF_OSK, SURF_TOAST, SURF_SETTINGS } UiSurf;
 typedef enum { PTR_LEAVE, PTR_MOVE, PTR_DOWN, PTR_UP } UiPtr;
 enum { UI_SHIFT = 1, UI_CTRL = 2, UI_ALT = 4, UI_SUPER = 8 };
-enum { DIRTY_DOCK = 1, DIRTY_MENU = 2, DIRTY_OSK = 4, DIRTY_TOAST = 8 };
+enum { DIRTY_DOCK = 1, DIRTY_MENU = 2, DIRTY_OSK = 4, DIRTY_TOAST = 8, DIRTY_SETTINGS = 16 };
 
 /* the system values the quick settings and the status group show; the shell reads them and hands them in */
 typedef struct {
@@ -60,6 +63,7 @@ typedef struct {
     int usb;                        /* 0 off, 1 computer, 2 host */
     float battery;                  /* 0..1, negative when there is none */
     bool charging;
+    int screen_timeout;             /* seconds without input before the panel blanks, 0 never, -1 not read yet */
 } UiSys;
 
 typedef struct {
@@ -67,6 +71,8 @@ typedef struct {
     int dock_h;                     /* the surface's height: the strip alone, or the whole screen while a panel is open (it then also catches the clicks outside) */
     bool dock_modal;                /* the dock holds the keyboard */
     bool menu_visible, osk_visible, toast_visible;
+    bool settings_visible;          /* the Settings window above the strip; it holds the keyboard */
+    int settings_h;                 /* its height: the screen above the strip */
     bool toast_modal;               /* the toast offers something to accept or dismiss: it holds the keyboard and takes clicks */
     int toast_w, toast_h;
 } UiGeom;
@@ -97,6 +103,10 @@ struct Ui {
     int qs_sel;
     int qs_page;                    /* 0 the list of rows, 1 the USB port submenu (the panel keeps its size, its content changes) */
     bool dragging;                  /* a slider is being dragged with the pointer */
+
+    bool settings;                  /* the Settings window is open */
+    bool set_in;                    /* the pad is in the page's rows, not in the list of pages */
+    int set_page, set_row, set_opt;
 
     bool menu;
     int mlist[WD_MAX_APPS], mn, msel, mtop;
@@ -153,12 +163,18 @@ typedef struct {
     char qs_text[UI_QS_ROWS][64];
     QsView qs;
     Hint qs_hints[2];
+    SetPage set_pages[UI_SET_PAGES];
+    SetRow set_rows[UI_SET_ROWS];
+    char set_note[UI_SET_ROWS][64];
+    Hint set_hints[3];
+    SettingsView settings;
     OskView osk;
     Hint toast_hints[2];
     ToastView toast;
 } UiViews;
 void ui_make_views(const Ui *u, UiViews *v);
 void ui_draw_dock(const Ui *u, const Vctx *v, const UiViews *vw);       /* the strip and whatever panel is open above it */
+void ui_draw_settings(const Ui *u, const Vctx *v, const UiViews *vw);   /* the Settings window (its own surface, above the strip) */
 
 /* US keyboard: the keys behind the characters of the on-screen keyboard and the characters behind a key press */
 bool ui_char_key(char ch, int *code, bool *shift);

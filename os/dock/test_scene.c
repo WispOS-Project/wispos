@@ -136,6 +136,17 @@ int main(int argc, char **argv)
             QsView q = { sub, 5, 1, hints, 2, view_quick_height(&list) };
             view_quick(&v, &q);
         }
+    } else if (!strcmp(scene, "settings-display")) {
+        dock_build(&d, &f, argv[3], true);
+        draw_dock(&v, &d, -1, false);
+        static const SetPage pages[] = { { "Display", "brightness", 0 }, { "Date & time", "monitor", 0 }, { "Power", "battery", 0.78f }, { "Connections", "wifi", 3 }, { "About", "about", 0 } };
+        static const SetRow rows[] = {
+            { "Screen timeout", "Turn the screen off after no input", { "Never", "1 min", "2 min", "5 min", "10 min", "30 min" }, 6, 2, 4 },
+            { "Desktop size", "Dock, menus and windows", { "100 %", "125 %", "150 %" }, 3, 0, -1 },
+        };
+        static const Hint hints[] = { { "A", "Change" }, { "B", "Back" }, { "L2/R2", "Page" } };
+        SettingsView sv = { pages, 5, 0, rows, 2, 0, true, hints, 3 };
+        view_settings(&v, &sv);
     } else if (!strcmp(scene, "osk") || !strcmp(scene, "osk-symbols")) {
         OskView o = { OSK_LOWER, false, false, 2, 4 };
         if (!strcmp(scene, "osk-symbols")) o = (OskView){ OSK_SYMBOLS, false, false, 3, 6 };

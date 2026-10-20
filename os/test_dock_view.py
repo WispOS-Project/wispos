@@ -39,7 +39,7 @@ def backdrops(fonts_dir):
     def terminal(height=None, typed=None):
         c = mockup.desktop_base(f, wall); mockup.terminal_window(c, height, typed); return c.img
     return {'desktop-empty': mockup.desktop_base(f, wall).img, 'desktop-window': terminal(), 'dock-focus': terminal(), 'dock-more': terminal(), 'apps-menu': terminal(),
-            'quick-settings': terminal(), 'quick-settings-submenu': terminal(), 'osk': terminal(mockup.token('WISP_UI_OSK_Y'), 'wisp-usb sta'), 'osk-symbols': terminal(mockup.token('WISP_UI_OSK_Y'), 'ls -la /storage/')}
+            'quick-settings': terminal(), 'quick-settings-submenu': terminal(), 'settings-display': mockup.desktop_base(f, wall).img, 'osk': terminal(mockup.token('WISP_UI_OSK_Y'), 'wisp-usb sta'), 'osk-symbols': terminal(mockup.token('WISP_UI_OSK_Y'), 'ls -la /storage/')}
 
 
 # (what it breaks, the text in view.c, what it becomes)
@@ -58,6 +58,15 @@ VIEW_MUTANTS = [
     ('the menu scrim is thin', 'RD_RGBA(WISP_UI_BG, WISP_UI_MENU_SCRIM)', 'RD_RGBA(WISP_UI_BG, 200)'),
     ('the selected menu tile is not white', 'sel ? FOCUS : PANEL);\n        view_icon', 'PANEL);\n        view_icon'),
     ('the slider knob is smaller', '(float)WISP_UI_SLIDER_KNOB', '5.f'),
+    ('the selected page is not white', 'if (on) rd_rrect(v->c, X(v, 10), Y(v, y), X(v, SET_SIDE - 8), Y(v, y + 40), WISP_UI_RADIUS, FOCUS);', 'if (on) rd_rrect(v->c, X(v, 10), Y(v, y), X(v, SET_SIDE - 8), Y(v, y + 40), WISP_UI_RADIUS, PANEL);'),
+    ('the option under the pad has no ring', 'if (sel && k == row->focus) rd_rrect_ring(', 'if (0) rd_rrect_ring('),
+    ('the option that applies is not marked', '(on && sel) ? FOCUS : on ? TEXT : PANEL);', '(on && sel) ? FOCUS : PANEL);'),
+    ('the settings title is missing', 'rd_text(v->c, v->f->title, IX(v, 20), IY(v, 22), "Settings", TEXT, RD_LEFT, RD_MIDDLE);', ''),
+    ('the settings rows are one pixel low', '#define SET_ROW_Y(i) (80 + 90 * (i))', '#define SET_ROW_Y(i) (81 + 90 * (i))'),
+    ('the settings hints sit higher', 'view_key_pill(v, hx, DOCK_TOP - 32,', 'view_key_pill(v, hx, DOCK_TOP - 34,'),
+    ('the battery page icon has no fill', 'battery(v, 18, 32.f, (float)(y + 20), ink, s->pages[i].level);', 'battery(v, 18, 32.f, (float)(y + 20), ink, 0.f);'),
+    ('the wifi page icon shows no bars', 'view_glyph(v, s->pages[i].glyph, (int)s->pages[i].level, 18, 32.f,', 'view_glyph(v, s->pages[i].glyph, 0, 18, 32.f,'),
+    ('the divider is missing', 'rd_vline(v->c, X(v, SET_SIDE), Y(v, 52), Y(v, DOCK_TOP - 10), 1.f, LINE);', ''),
     ('a link row has no chevron', 'view_glyph(v, "right", 0, 18, (float)(x0 + pw - 28), (float)top, sel ? FOCUS_FG : DIM);', '(void)0;'),
     ('the submenu panel follows its rows', 'if (q->height > 0) return q->height;', ''),
     ('the back row has no chevron', 'view_glyph(v, "left", 0, 18, (float)(x0 + 28), (float)top, sel ? FOCUS_FG : GLYPHC);', '(void)0;'),
@@ -132,7 +141,7 @@ class ViewTests(unittest.TestCase):
         r = subprocess.run([sys.executable, '-I', str(DOCK / 'gen_glyphs.py'), '--check'], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    SCENES = {'desktop-empty': [(436, 258, 460, 290)], 'desktop-window': [], 'dock-focus': [], 'dock-more': [], 'apps-menu': [], 'quick-settings': [], 'quick-settings-submenu': [], 'osk': [], 'osk-symbols': []}
+    SCENES = {'desktop-empty': [(436, 258, 460, 290)], 'desktop-window': [], 'dock-focus': [], 'dock-more': [], 'apps-menu': [], 'quick-settings': [], 'quick-settings-submenu': [], 'settings-display': [], 'osk': [], 'osk-symbols': []}
 
     def test_the_comparison_notices_changes_to_the_views(self):
         """Each of these edits of view.c (a missing bar, a shifted row, a wrong colour ...) must make at least one scene fail, or the comparison above could not be relied on."""
@@ -159,6 +168,7 @@ class ViewTests(unittest.TestCase):
     def test_quick_settings(self):
         self.compare('quick-settings')
     def test_quick_settings_submenu(self): self.compare('quick-settings-submenu')
+    def test_settings_display(self):     self.compare('settings-display')
     def test_osk(self):                  self.compare('osk')
     def test_osk_symbols(self):          self.compare('osk-symbols')
 

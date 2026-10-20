@@ -6,7 +6,7 @@
  * input and sockets into calls to those and carries out the effects they ask for. It is a single thread around one poll() loop and uses no CPU while nothing happens.
  *
  *   wisp-dock                 run (started by the desktop session, wisp-desktop.service)
- *   wisp-dock --ctl CMD       send a command to the running one: summon menu qs osk actions state quit, and toast TITLE|TEXT|SECONDS (the sway key bindings and the programs it starts use
+ *   wisp-dock --ctl CMD       send a command to the running one: summon menu qs settings osk actions state quit, and toast TITLE|TEXT|SECONDS (the sway key bindings and the programs it starts use
  *                             it; `state` prints one line)
  *
  * Environment (all optional; the defaults are the image's paths): WISP_DOCK_APPS (colon-separated directories of desktop files, highest priority first), WISP_DOCK_PINS, WISP_DOCK_FONTS,
@@ -76,7 +76,7 @@ static int64_t now_ms(void)
 /* ------------------------------------------------------------------ state */
 typedef struct { struct wl_buffer *b; uint32_t *px; size_t size; int w, h; bool busy; } Buf;
 
-enum { P_DOCK, P_MENU, P_OSK, P_TOAST, P_N };
+enum { P_DOCK, P_MENU, P_OSK, P_TOAST, P_SETTINGS, P_N };
 
 typedef struct {
     const char *name;
@@ -99,7 +99,7 @@ typedef struct Top {
 
 typedef struct Job Job;
 struct Job { pid_t pid; int fd; char out[4096]; size_t len; int tag; };
-enum { J_VOLUME, J_WIFI, J_BT, J_SSH, J_USB, J_VOLSET, J_FIRE };
+enum { J_VOLUME, J_WIFI, J_BT, J_SSH, J_USB, J_TIMEOUT, J_VOLSET, J_FIRE };
 #define JOBS 10
 
 static struct {
@@ -289,11 +289,13 @@ static void refresh_slow(void)
     static const char *const bt[] = { "bluetoothctl", "show", NULL };
     static const char *const ssh[] = { "wisp-ssh", "status", NULL };
     static const char *const usb[] = { "wisp-usb", "status", NULL };
+    static const char *const timeout[] = { "wisp-screen", "timeout", "status", NULL };
     job_start(J_VOLUME, volume);
     job_start(J_WIFI, wifi);
     job_start(J_BT, bt);
     job_start(J_SSH, ssh);
     job_start(J_USB, usb);
+    job_start(J_TIMEOUT, timeout);
 }
 
 static void job_done(Job *j, int status)
@@ -306,6 +308,7 @@ static void job_done(Job *j, int status)
     case J_BT: sys_parse_bluetooth(j->out, &s->bt_available, &s->bt_on); break;
     case J_SSH: sys_parse_ssh(j->out, &s->ssh_on, s->ssh_addr, sizeof s->ssh_addr); break;
     case J_USB: { int m = sys_parse_usb(j->out); if (m >= 0) s->usb = m; break; }
+    case J_TIMEOUT: { int t = sys_parse_screen_timeout(j->out); if (t >= 0) s->screen_timeout = t; S.ui.dirty |= DIRTY_SETTINGS; break; }
     default: break;
     }
     S.ui.dirty |= DIRTY_DOCK;
@@ -438,6 +441,7 @@ static void panel_draw(Panel *p)
     case P_MENU: view_menu(&v, &S.views.menu); break;
     case P_OSK: v.oy = p->h - WISP_UI_H; view_osk(&v, &S.views.osk); view_osk_hints(&v); break;
     case P_TOAST: view_toast(&v, &S.views.toast); break;
+    case P_SETTINGS: ui_draw_settings(&S.ui, &v, &S.views); break;
     }
     p->dirty = false;
     p->frame = wl_surface_frame(p->surf);
@@ -533,6 +537,9 @@ static void sync_surfaces(void)
     panel_ensure(P_MENU, g.menu_visible, &menu);
     panel_ensure(P_OSK, g.osk_visible, &osk);
     panel_ensure(P_TOAST, g.toast_visible && g.toast_w > 0, &toast);
+    PanelCfg settings = { ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
+                           0, g.settings_h, -1, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE, 0, 0, false };           /* above the strip, which keeps its own space */
+    panel_ensure(P_SETTINGS, g.settings_visible, &settings);
     if (S.ptr_panel >= 0 && !S.panels[S.ptr_panel].alive) S.ptr_panel = -1;
 }
 
@@ -594,13 +601,13 @@ static int panel_of(struct wl_surface *s)
     return -1;
 }
 
-static UiSurf surf_of(int panel) { return panel == P_MENU ? SURF_MENU : panel == P_OSK ? SURF_OSK : panel == P_TOAST ? SURF_TOAST : SURF_DOCK; }
+static UiSurf surf_of(int panel) { return panel == P_SETTINGS ? SURF_SETTINGS : panel == P_MENU ? SURF_MENU : panel == P_OSK ? SURF_OSK : panel == P_TOAST ? SURF_TOAST : SURF_DOCK; }
 
 static void ptr_to_ui(int panel, wl_fixed_t fx, wl_fixed_t fy, UiPtr ev, int button)
 {
     Panel *p = &S.panels[panel];
     int x = wl_fixed_to_int(fx), y = wl_fixed_to_int(fy) + (WISP_UI_H - p->h);          /* a surface anchored to the bottom: its top is at screen y = 480 - h */
-    if (panel == P_MENU) y = wl_fixed_to_int(fy);
+    if (panel == P_MENU || panel == P_SETTINGS) y = wl_fixed_to_int(fy);                   /* surfaces anchored to the top */
     ui_pointer(&S.ui, surf_of(panel), x, y, ev, button);
 }
 
@@ -763,6 +770,7 @@ static void run_effects(void)
             case EFF_SET_BRIGHTNESS: { char sysfs[300]; snprintf(sysfs, sizeof sysfs, "%s/class/backlight", S.sysfs); if (!sys_write_backlight(sysfs, f->f, 0.05f)) note("cannot set the brightness"); break; }
             case EFF_SET_BLUETOOTH: { const char *const a[] = { "bluetoothctl", "power", f->a ? "on" : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
             case EFF_SET_SSH: { const char *const a[] = { "wisp-ssh", f->a ? "on" : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
+            case EFF_SET_SCREEN_TIMEOUT: { char n[16]; snprintf(n, sizeof n, "%d", f->a); const char *const a[] = { "wisp-screen", "timeout", f->a > 0 ? n : "off", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }       /* as for the other settings: read it back only after it was written */
             case EFF_SET_USB: { const char *const a[] = { "wisp-usb", f->a == 0 ? "off" : f->a == 1 ? "computer" : "host", NULL }; job_start(J_FIRE, a); S.next_slow = now_ms() + 2500; break; }
             case EFF_WIFI: ui_toast(&S.ui, "Wi-Fi networks", "Choose one in Game mode: Settings, Internet.", 5000); break;
             case EFF_REFRESH: refresh_fast(); refresh_slow(); break;
@@ -800,8 +808,8 @@ static const char *dock_name(UiDock d) { return d == UI_IDLE ? "idle" : d == UI_
 static void ctl_state(char *out, size_t cap)
 {
     const Ui *u = &S.ui;
-    snprintf(out, cap, "dock=%s focus=%s menu=%d osk=%d items=%d windows=%d pins=%d query=%s sel=%d qs=%d toast=%d toast_modal=%d panels=", dock_name(u->dock), u->focus >= 0 ? u->items[u->focus].key : "-", u->menu, u->osk,
-             u->n, u->ws.n, u->pins.n, u->query, u->menu ? u->msel : u->orow * 100 + u->ocol, u->qs_sel, u->toast.on, u->toast.on && u->toast.modal);
+    snprintf(out, cap, "dock=%s focus=%s menu=%d osk=%d items=%d windows=%d pins=%d query=%s sel=%d qs=%d toast=%d toast_modal=%d settings=%d panels=", dock_name(u->dock), u->focus >= 0 ? u->items[u->focus].key : "-", u->menu, u->osk,
+             u->n, u->ws.n, u->pins.n, u->query, u->menu ? u->msel : u->orow * 100 + u->ocol, u->qs_sel, u->toast.on, u->toast.on && u->toast.modal, u->settings);
     for (int i = 0; i < P_N; i++) {
         size_t o = strlen(out);
         if (S.panels[i].alive) snprintf(out + o, cap - o, "%s%s:%dx%d%s", o && out[o - 1] != '=' ? "," : "", S.panels[i].name, S.panels[i].w, S.panels[i].h, S.panels[i].configured ? "" : "?");
@@ -821,7 +829,7 @@ static void ctl_line(int fd, char *line)
     }
     else if (!strncmp(line, "key ", 4)) { int code = atoi(line + 4); if (code > 0) ui_key(&S.ui, code, "", 0); }
     else if (!strncmp(line, "text ", 5)) { for (const char *p = line + 5; *p; p++) { int c; bool sh; if (ui_char_key(*p, &c, &sh)) { char t[2] = { *p, 0 }; ui_key(&S.ui, c, t, sh ? UI_SHIFT : 0); } } }
-    else if (!strcmp(line, "summon") || !strcmp(line, "menu") || !strcmp(line, "qs") || !strcmp(line, "osk") || !strcmp(line, "actions") || !strncmp(line, "nav-", 4) || !strncmp(line, "osk-", 4))
+    else if (!strcmp(line, "summon") || !strcmp(line, "menu") || !strcmp(line, "qs") || !strcmp(line, "settings") || !strcmp(line, "osk") || !strcmp(line, "actions") || !strncmp(line, "nav-", 4) || !strncmp(line, "osk-", 4))
         ui_pad(&S.ui, line);
     else note("unknown command: %.40s", line);
 }
@@ -988,6 +996,7 @@ static void flush_state(void)
     if (d & DIRTY_MENU) S.panels[P_MENU].dirty = true;
     if (d & DIRTY_OSK) S.panels[P_OSK].dirty = true;
     if (d & DIRTY_TOAST) S.panels[P_TOAST].dirty = true;
+    if (d & DIRTY_SETTINGS) S.panels[P_SETTINGS].dirty = true;
     for (int i = 0; i < P_N; i++) if (S.panels[i].alive && S.panels[i].dirty) panel_draw(&S.panels[i]);
 }
 
@@ -1083,6 +1092,7 @@ int main(int argc, char **argv)
     S.panels[P_MENU].name = "wisp-menu";
     S.panels[P_OSK].name = "wisp-osk";
     S.panels[P_TOAST].name = "wisp-toast";
+    S.panels[P_SETTINGS].name = "wisp-settings";
     const char *e;
     snprintf(S.sysfs, sizeof S.sysfs, "%s", (e = getenv("WISP_DOCK_SYSFS")) && *e ? e : "/sys");
     snprintf(S.tool_dir, sizeof S.tool_dir, "%s", (e = getenv("WISP_DOCK_BIN")) && *e ? e : "");

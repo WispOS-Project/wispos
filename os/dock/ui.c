@@ -73,6 +73,7 @@ void ui_init(Ui *u, WdApps *apps, const ViewFonts *fonts)
     u->orow = 2;
     u->ocol = 4;
     u->sys.battery = -1.f;
+    u->sys.screen_timeout = -1;
     u->sys.volume = 0.5f;
     u->sys.brightness = 0.5f;
     snprintf(u->clock, sizeof u->clock, "--:--");
@@ -401,6 +402,117 @@ static void qs_key(Ui *u, int code)
     }
 }
 
+/* ------------------------------------------------------------------ the settings window */
+static void fmt_into(char *dst, size_t cap, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+/* The pages that exist (each later page adds its rows here). Display: Screen timeout, the panel's blank timeout in `wisp-screen timeout` (the file the idle watcher reads). */
+enum { SET_DISPLAY, SET_PAGES };
+static const char *const TIMEOUT_NAMES[6] = { "Never", "1 min", "2 min", "5 min", "10 min", "30 min" };
+static const int TIMEOUT_SECS[6] = { 0, 60, 120, 300, 600, 1800 };               /* 120 s is what the idle watcher uses until someone sets another */
+
+static int set_nrows(int page) { return page == SET_DISPLAY ? 1 : 0; }
+static int set_nopt(int page, int row) { (void)row; return page == SET_DISPLAY ? 6 : 0; }
+static int set_on(const Ui *u, int page, int row)                                 /* the option that applies, -1 when the value is none of them */
+{
+    (void)row;
+    if (page == SET_DISPLAY) for (int i = 0; i < 6; i++) if (u->sys.screen_timeout == TIMEOUT_SECS[i]) return i;
+    return -1;
+}
+
+static void settings_open(Ui *u)
+{
+    menu_close(u);
+    if (u->osk) osk_set(u, false);
+    if (u->dock != UI_IDLE) dock_close(u);
+    u->settings = true;
+    u->set_page = 0;
+    u->set_in = false;
+    u->set_row = u->set_opt = 0;
+    eff(u, EFF_REFRESH, 0, 0, 0, 0, NULL);
+    dirty(u, DIRTY_SETTINGS | DIRTY_DOCK);
+}
+
+static void settings_close(Ui *u)
+{
+    if (!u->settings) return;
+    u->settings = false;
+    u->set_in = false;
+    dirty(u, DIRTY_SETTINGS | DIRTY_DOCK);
+}
+
+static void set_enter(Ui *u)                                                      /* into the page's rows, on the option that applies */
+{
+    if (set_nrows(u->set_page) == 0) return;
+    int on = set_on(u, u->set_page, 0);
+    u->set_in = true;
+    u->set_row = 0;
+    u->set_opt = on >= 0 ? on : 0;
+    dirty(u, DIRTY_SETTINGS);
+}
+
+/* Which rows apply something when picked. Every row counted by set_nrows needs a case here and in set_apply: a click on a row that is not listed is ignored, so a row added
+ * without its case cannot be selected and then do nothing. */
+static bool set_applies(int page, int row) { return page == SET_DISPLAY && row == 0; }
+
+static void set_apply(Ui *u)
+{
+    if (set_applies(u->set_page, u->set_row)) {
+        int secs = TIMEOUT_SECS[clampi(u->set_opt, 0, 5)];
+        if (secs != u->sys.screen_timeout) { u->sys.screen_timeout = secs; eff(u, EFF_SET_SCREEN_TIMEOUT, secs, 0, 0, 0, NULL); }
+    }
+    dirty(u, DIRTY_SETTINGS);
+}
+
+static void settings_key(Ui *u, int code, unsigned mods)
+{
+    switch (code) {
+    case KEY_ESC: if (u->set_in) { u->set_in = false; dirty(u, DIRTY_SETTINGS); } else settings_close(u); break;
+    case KEY_TAB: u->set_page = clampi(u->set_page + ((mods & UI_SHIFT) ? -1 : 1), 0, SET_PAGES - 1); u->set_in = false; dirty(u, DIRTY_SETTINGS); break;     /* R2 / L2 */
+    case KEY_UP: case KEY_DOWN: {
+        int d = code == KEY_UP ? -1 : 1;
+        if (u->set_in) u->set_row = clampi(u->set_row + d, 0, set_nrows(u->set_page) - 1);
+        else u->set_page = clampi(u->set_page + d, 0, SET_PAGES - 1);
+        dirty(u, DIRTY_SETTINGS);
+        break;
+    }
+    case KEY_LEFT:
+        if (u->set_in) { if (u->set_opt == 0) u->set_in = false; else u->set_opt--; dirty(u, DIRTY_SETTINGS); }
+        break;
+    case KEY_RIGHT:
+        if (!u->set_in) set_enter(u);
+        else { u->set_opt = clampi(u->set_opt + 1, 0, set_nopt(u->set_page, u->set_row) - 1); dirty(u, DIRTY_SETTINGS); }
+        break;
+    case KEY_ENTER: case KEY_KPENTER: if (u->set_in) set_apply(u); else set_enter(u); break;
+    default: break;
+    }
+}
+
+static void set_build(const Ui *u, SetPage pages[UI_SET_PAGES], SetRow rows[UI_SET_ROWS], char note[UI_SET_ROWS][64], Hint hints[3], SettingsView *out)
+{
+    pages[SET_DISPLAY] = (SetPage){ "Display", "brightness", 0 };
+    int nrows = set_nrows(u->set_page);
+    if (u->set_page == SET_DISPLAY) {
+        int on = set_on(u, SET_DISPLAY, 0);
+        if (on >= 0 || u->sys.screen_timeout < 0) fmt_into(note[0], 64, "Turn the screen off after no input");
+        else fmt_into(note[0], 64, "Set to %d s from a terminal; pick one to change it", u->sys.screen_timeout);
+        rows[0] = (SetRow){ "Screen timeout", note[0], { TIMEOUT_NAMES[0], TIMEOUT_NAMES[1], TIMEOUT_NAMES[2], TIMEOUT_NAMES[3], TIMEOUT_NAMES[4], TIMEOUT_NAMES[5] }, 6, on,
+                            u->set_in && u->set_row == 0 ? u->set_opt : -1 };
+    }
+    hints[0] = (Hint){ "A", "Change" };
+    hints[1] = (Hint){ "B", u->set_in ? "Back" : "Close" };
+    hints[2] = (Hint){ "L2/R2", "Page" };
+    *out = (SettingsView){ pages, SET_PAGES, u->set_page, rows, nrows, u->set_row, u->set_in, hints, SET_PAGES > 1 ? 3 : 2 };
+}
+
+static void pointer_settings(Ui *u, int x, int y, UiPtr ev, int button)
+{
+    if (ev != PTR_DOWN || button != BTN_LEFT) return;
+    SetPage pages[UI_SET_PAGES]; SetRow rows[UI_SET_ROWS]; char note[UI_SET_ROWS][64]; Hint hints[3]; SettingsView sv;
+    set_build(u, pages, rows, note, hints, &sv);
+    SetHit h = view_settings_hit(&sv, x, y);
+    if (h.page >= 0) { u->set_page = h.page; u->set_in = false; dirty(u, DIRTY_SETTINGS); }
+    else if (h.row >= 0 && set_applies(u->set_page, h.row)) { u->set_in = true; u->set_row = h.row; u->set_opt = h.opt; set_apply(u); }
+}
+
 /* ------------------------------------------------------------------ the on-screen keyboard */
 static void osk_clamp(Ui *u)
 {
@@ -471,7 +583,10 @@ static void toast_end(Ui *u, bool accept);
 void ui_pad(Ui *u, const char *cmd)
 {
     if (u->toast.on && u->toast.modal && (!strcmp(cmd, "summon") || !strcmp(cmd, "menu") || !strcmp(cmd, "qs") || !strcmp(cmd, "osk"))) toast_end(u, false);       /* asking for something else puts an offer away */
-    if (!strcmp(cmd, "summon")) {
+    if (u->settings && (!strcmp(cmd, "summon") || !strcmp(cmd, "menu") || !strcmp(cmd, "qs") || !strcmp(cmd, "osk"))) settings_close(u);       /* asking for the strip, the menu, the quick settings or the keyboard leaves the window */
+    if (!strcmp(cmd, "settings")) {
+        if (u->settings) settings_close(u); else settings_open(u);
+    } else if (!strcmp(cmd, "summon")) {
         if (u->dock == UI_SUMMONED || u->dock == UI_ACTIONS_OPEN || u->dock == UI_QS) dock_close(u);
         else dock_summon(u, true);
     } else if (!strcmp(cmd, "menu")) {
@@ -533,6 +648,7 @@ void ui_key(Ui *u, int code, const char *utf8, unsigned mods)
         else if (code == KEY_ESC) toast_end(u, false);
         return;
     }
+    if (u->settings) { settings_key(u, code, mods); return; }
     if (u->menu) { menu_key(u, code, utf8, mods); return; }
     if (u->dock != UI_IDLE) { dock_key(u, code, mods); return; }
     /* no panel is open: the shell only has the keyboard for shortcuts */
@@ -648,6 +764,8 @@ void ui_pointer(Ui *u, UiSurf s, int x, int y, UiPtr ev, int button)
         if (ev == PTR_DOWN && u->toast.on && u->toast.modal) toast_end(u, button == BTN_LEFT);
         return;
     }
+    if (s == SURF_SETTINGS) { if (u->settings) pointer_settings(u, x, y, ev, button); return; }
+    if (s == SURF_DOCK && u->settings && ev == PTR_DOWN) settings_close(u);                    /* a press on the strip leaves the window and then acts */
     if (s == SURF_DOCK) { if (!u->menu && !u->osk) pointer_dock(u, x, y, ev, button); }      /* the dock is covered by the menu and hidden by the keyboard */
     else if (s == SURF_MENU) { if (u->menu) pointer_menu(u, x, y, ev, button); }
     else if (u->osk) pointer_osk(u, x, y, ev, button);
@@ -721,6 +839,8 @@ UiGeom ui_geometry(const Ui *u)
     g.dock_modal = u->dock != UI_IDLE;
     g.dock_h = g.dock_modal ? WISP_UI_H : WISP_UI_DOCK_H;
     g.menu_visible = u->menu;
+    g.settings_visible = u->settings;
+    g.settings_h = view_settings_height();
     g.osk_visible = u->osk;
     g.toast_visible = u->toast.on;
     g.toast_modal = u->toast.on && u->toast.modal;
@@ -863,6 +983,7 @@ void ui_make_views(const Ui *u, UiViews *vw)
     }
     vw->menu = (MenuView){ vw->menu_e, u->mn, u->msel, u->mtop, "Applications", "Pick an app. X pins it to the dock.", vw->menu_hints, 4, u->query[0] ? u->query : NULL };
     qs_build(u, vw->qs_rows, vw->qs_text, vw->qs_hints, &vw->qs);
+    set_build(u, vw->set_pages, vw->set_rows, vw->set_note, vw->set_hints, &vw->settings);
     vw->osk = (OskView){ u->page, u->shift, u->ctrl, u->orow, u->ocol };
     vw->toast_hints[0] = (Hint){ "A", u->toast.label };
     vw->toast_hints[1] = (Hint){ "B", "Dismiss" };
@@ -875,4 +996,10 @@ void ui_draw_dock(const Ui *u, const Vctx *v, const UiViews *vw)
     if (vw->bar_visible) view_focus_bar(v, vw->bar_name, vw->bar, vw->nbar);
     if (u->dock == UI_ACTIONS_OPEN) view_popup(v, vw->popup_x, vw->popup, vw->npopup, u->act_sel, 214);
     if (u->dock == UI_QS) view_quick(v, &vw->qs);
+}
+
+void ui_draw_settings(const Ui *u, const Vctx *v, const UiViews *vw)
+{
+    (void)u;
+    view_settings(v, &vw->settings);
 }

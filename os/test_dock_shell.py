@@ -171,6 +171,7 @@ class Rig:
         tools = {'wpctl': 'case "$1" in get-volume) echo "Volume: 0.50";; *) echo "$@" >> "%(d)s/wpctl.log";; esac',
                  'nmcli': 'echo "*:TestNet:80"', 'bluetoothctl': 'echo "No default controller available"',
                  'wisp-ssh': 'case "$1" in on|off) echo "$@" >> "%(d)s/ssh.log";; esac; echo "ssh: off"', 'wisp-usb': 'case "$1" in off|computer|host) echo "$@" >> "%(d)s/usb.log";; esac; echo "usb: off"',
+                 'wisp-screen': 'case "$1" in timeout) case "$2" in status) echo 120;; *) echo "$2" >> "%(d)s/screen-timeout.log";; esac;; esac',
                  'wisp-session-select': 'echo "$@" >> "%(d)s/session.log"', 'wisp-download-action': 'echo "$@" >> "%(d)s/download-action.log"'}
         for n, body in tools.items():
             p = self.tools / n; p.write_text('#!/bin/sh\n' + body % {'d': self.d} + '\n'); p.chmod(0o755)
@@ -606,6 +607,26 @@ class ShellTests(unittest.TestCase):
         time.sleep(3)                                     # the tools are asked when it opens
         shot = self.rig.grim()
         self.assertGreater(int((shot[100:400, 400:720].astype(int).sum(-1) > 60).sum()), 2000, 'the panel is on the screen')
+
+    def test_the_settings_window_takes_the_keyboard_and_sets_the_screen_timeout(self):
+        self.rig.start_dock()
+        c = self.client('terminal')
+        self.rig.wait(lambda: 'enter' in c.lines(), 20, 'the window to get the keyboard')
+        self.rig.ctl('settings')
+        self.rig.wait(lambda: self.rig.state()['settings'] == '1', 20, 'the settings window')
+        self.rig.wait(lambda: 'wisp-settings:720x436' in self.rig.state()['panels'], 20, 'its surface above the strip')
+        self.rig.wait(lambda: 'leave' in c.lines(), 20, 'the terminal to lose the keyboard')
+        time.sleep(3)                                                 # the tools are asked when it opens: the screen timeout (120 s) is read
+        shot = self.rig.grim()
+        self.assertGreater(int((shot[10:34, 20:140].astype(int).sum(-1) > 500).sum()), 100, 'the title "Settings" is on the screen')
+        self.rig.tap('right'); self.rig.tap('right'); self.rig.tap('enter')       # into the rows on 2 min (what the tool reported), on to 5 min, apply
+        log = self.rig.d / 'screen-timeout.log'
+        self.rig.wait(lambda: log.exists() and log.read_text().strip(), 30, 'the timeout to be set through wisp-screen')
+        self.assertEqual(log.read_text().split(), ['300'])
+        self.assertEqual(c.keys(), [], 'nothing typed in the settings window reaches the terminal')
+        self.rig.tap('esc'); self.rig.tap('esc')
+        self.rig.wait(lambda: self.rig.state()['settings'] == '0' and self.rig.state()['panels'] == 'wisp-dock:720x44', 20, 'the window to close and its surface to go')
+        self.rig.wait(lambda: c.lines().count('enter') == 2, 20, 'the terminal to get the keyboard back')
 
 
 if __name__ == '__main__':

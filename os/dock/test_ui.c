@@ -1,6 +1,6 @@
 /* Tests of the desktop shell's UI state machine (ui.c): scripted flows (the dock, its actions list, the application menu, the quick settings, the on-screen keyboard, the pointer) and a
  * random run that checks the state stays consistent. Effects are written as short words: launch:<id> activate:<window> close:<window> save game type:<key>[+shift][+ctrl] pad-osk:<0|1>
- * pad-focus:<app> volume:<f> brightness:<f> bluetooth:<0|1> ssh:<0|1> usb:<0|1|2> wifi refresh browser-actions.
+ * pad-focus:<app> volume:<f> brightness:<f> bluetooth:<0|1> ssh:<0|1> usb:<0|1|2> screen-timeout:<seconds> wifi refresh browser-actions.
  * Run by os/test_dock_ui.py under the sanitizers and against rule mutants of ui.c. */
 #define _GNU_SOURCE
 #include "ui.h"
@@ -113,6 +113,7 @@ static const char *effs(void)
         case EFF_SET_BLUETOOTH: snprintf(w, sizeof w, "bluetooth:%d", e[i].a); break;
         case EFF_SET_SSH: snprintf(w, sizeof w, "ssh:%d", e[i].a); break;
         case EFF_SET_USB: snprintf(w, sizeof w, "usb:%d", e[i].a); break;
+        case EFF_SET_SCREEN_TIMEOUT: snprintf(w, sizeof w, "screen-timeout:%d", e[i].a); break;
         case EFF_WIFI: snprintf(w, sizeof w, "wifi"); break;
         case EFF_REFRESH: snprintf(w, sizeof w, "refresh"); break;
         case EFF_BROWSER_ACTIONS: snprintf(w, sizeof w, "browser-actions"); break;
@@ -606,6 +607,115 @@ static void t_quick_pointer(void)
     free(vw);
 }
 
+/* ------------------------------------------------------------------ the settings window */
+static void t_settings(void)
+{
+    fresh(true);
+    U.sys.screen_timeout = 120;
+    pad("settings");
+    check_true("opened", U.settings);
+    EXPECT("fresh values are asked for", "refresh");
+    UiGeom g = ui_geometry(&U);
+    check_true("its own surface is wanted", g.settings_visible);
+    check_int("above the strip, which keeps its space", g.settings_h, WISP_UI_H - WISP_UI_DOCK_H);
+    check_true("the pad starts in the list of pages", !U.set_in);
+    key(KEY_TAB);
+    check_int("Tab on the last page stays on it", U.set_page, 0);
+    key(KEY_RIGHT);
+    check_true("right enters the rows", U.set_in);
+    check_int("on the option that applies (2 min)", U.set_opt, 2);
+    key(KEY_RIGHT);
+    check_int("right moves to 5 min", U.set_opt, 3);
+    EXPECT("moving applies nothing", "");
+    key(KEY_ENTER);
+    EXPECT("A applies it", "screen-timeout:300");
+    check_int("the shown value follows", U.sys.screen_timeout, 300);
+    key(KEY_ENTER);
+    EXPECT("applying the one that is on does nothing", "");
+    for (int i = 0; i < 6; i++) key(KEY_RIGHT);
+    check_int("right stops at the last option", U.set_opt, 5);
+    key(KEY_ENTER);
+    EXPECT("30 min is 1800 seconds", "screen-timeout:1800");
+    for (int i = 0; i < 5; i++) key(KEY_LEFT);
+    check_int("left walks back to Never", U.set_opt, 0);
+    key(KEY_ENTER);
+    EXPECT("Never is 0", "screen-timeout:0");
+    key(KEY_LEFT);
+    check_true("left from the first option returns to the pages", !U.set_in);
+    key(KEY_RIGHT);
+    key(KEY_ESC);
+    check_true("B in the rows returns to the pages", !U.set_in);
+    check_true("without closing the window", U.settings);
+    key(KEY_ESC);
+    check_true("B in the pages closes the window", !U.settings);
+    check_true("and its surface goes", !ui_geometry(&U).settings_visible);
+
+    U.sys.screen_timeout = 90;                                         /* set from a terminal to a value none of the options is */
+    pad("settings");
+    effs();
+    UiViews *vw = malloc(sizeof *vw);
+    ui_make_views(&U, vw);
+    check_int("no option is on", vw->set_rows[0].on, -1);
+    check_true("the note says so", strstr(vw->set_rows[0].note, "90 s") != NULL);
+    key(KEY_RIGHT);
+    check_int("entering starts on the first option", U.set_opt, 0);
+    key(KEY_RIGHT); key(KEY_ENTER);
+    EXPECT("picking one replaces the odd value", "screen-timeout:60");
+    free(vw);
+
+    pad("qs");
+    check_true("asking for the quick settings closes the window", !U.settings);
+    check_int("and opens them", U.dock, UI_QS);
+    pad("settings");
+    check_true("asking for the window closes the quick settings", U.settings && U.dock == UI_IDLE);
+    pad("settings");
+    check_true("the same command closes it", !U.settings);
+    pad("settings"); pad("menu");
+    check_true("the application menu replaces it", !U.settings && U.menu);
+    pad("menu");
+}
+
+static void t_dock_pointer_under_the_menu(void)
+{
+    fresh(true);
+    pad("menu");
+    effs();
+    for (int x = 0; x < WISP_UI_W; x += 20) {
+        ui_pointer(&U, SURF_DOCK, x, WISP_UI_H - 20, PTR_DOWN, BTN_LEFT);
+        ui_pointer(&U, SURF_DOCK, x, WISP_UI_H - 20, PTR_UP, BTN_LEFT);
+    }
+    EXPECT("the strip is covered by the menu: presses on it do nothing", "");
+    check_true("and the menu stays", U.menu && U.dock == UI_IDLE);
+    pad("menu");
+}
+
+static void t_settings_pointer(void)
+{
+    fresh(true);
+    U.sys.screen_timeout = 120;
+    pad("settings");
+    effs();
+    int w6 = (702 - 194) / 6;
+    int y_opt = 80 + 34 + 15;
+    ui_pointer(&U, SURF_SETTINGS, 194 + 4 * w6 + w6 / 2, y_opt, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on 10 min applies it", "screen-timeout:600");
+    check_true("and puts the pad in the rows", U.set_in && U.set_opt == 4);
+    ui_pointer(&U, SURF_SETTINGS, 194 + 4 * w6 + w6 / 2, y_opt, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on the one that is on does nothing", "");
+    ui_pointer(&U, SURF_SETTINGS, 194 + 5 * w6 + w6 / 2, y_opt, PTR_DOWN, BTN_RIGHT);
+    EXPECT("a right click on another option does nothing", "");
+    ui_pointer(&U, SURF_SETTINGS, 80, 56 + 20, PTR_DOWN, BTN_LEFT);
+    check_true("a click on a page returns to the pages", !U.set_in && U.set_page == 0);
+    ui_pointer(&U, SURF_SETTINGS, 400, 400, PTR_DOWN, BTN_LEFT);
+    check_true("a click on nothing changes nothing", U.settings && !U.set_in);
+    EXPECT("with no effect", "");
+    ui_pointer(&U, SURF_DOCK, 20, WISP_UI_H - 20, PTR_DOWN, BTN_LEFT);
+    check_true("a press on the strip leaves the window", !U.settings);
+    effs();
+    ui_pointer(&U, SURF_SETTINGS, 194 + w6, y_opt, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click with the window closed does nothing", "");
+}
+
 /* ------------------------------------------------------------------ the keyboard */
 static void t_osk(void)
 {
@@ -1032,7 +1142,7 @@ static void t_views(void)
 static unsigned long long rng = 88172645463325252ULL;
 static unsigned rnd(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return (unsigned)(rng >> 11); }
 
-static const char *const PADCMDS[] = { "summon", "menu", "qs", "osk", "actions", "scroll-on", "scroll-off", "nav-up", "nav-down", "nav-left", "nav-right", "osk-type", "osk-del", "osk-shift",
+static const char *const PADCMDS[] = { "summon", "menu", "qs", "settings", "osk", "actions", "scroll-on", "scroll-off", "nav-up", "nav-down", "nav-left", "nav-right", "osk-type", "osk-del", "osk-shift",
                                        "osk-space", "osk-enter", "osk-hide", "bogus" };
 static const int KEYS[] = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_ENTER, KEY_ESC, KEY_SPACE, KEY_TAB, KEY_BACKSPACE, KEY_A, KEY_Z, KEY_D, KEY_S, KEY_K };
 
@@ -1051,6 +1161,9 @@ static void invariants(const char *when)
     if (U.orow < 0 || U.orow > 4 || U.ocol < 0 || U.ocol >= view_osk_row_len(U.page, U.orow)) { failed++; printf("FAIL %s: keyboard focus %d,%d on page %d\n", w, U.orow, U.ocol, U.page); }
     if (U.shift && U.page == OSK_SYMBOLS) { failed++; printf("FAIL %s: shift on the symbols page\n", w); }
     if (U.sys.volume < 0.f || U.sys.volume > 1.f || U.sys.brightness < 0.0499f || U.sys.brightness > 1.f) { failed++; printf("FAIL %s: volume %f brightness %f\n", w, (double)U.sys.volume, (double)U.sys.brightness); }
+    if (U.settings && (U.menu || U.osk || U.dock != UI_IDLE)) { failed++; printf("FAIL %s: the settings window together with another panel\n", w); }
+    if (U.set_in && !U.settings) { failed++; printf("FAIL %s: the pad in settings rows with the window closed\n", w); }
+    if (U.set_page < 0 || U.set_page >= UI_SET_PAGES || U.set_row < 0 || U.set_row >= UI_SET_ROWS || U.set_opt < 0 || U.set_opt > 5) { failed++; printf("FAIL %s: settings focus %d/%d/%d\n", w, U.set_page, U.set_row, U.set_opt); }
     if (U.pins.n > WD_MAX_PINS) { failed++; printf("FAIL %s: pins\n", w); }
     if (strlen(U.query) >= UI_QUERY) { failed++; printf("FAIL %s: query\n", w); }
     if (U.toast.modal && !U.toast.on) { failed++; printf("FAIL %s: a modal toast that is not on\n", w); }
@@ -1067,7 +1180,7 @@ static void t_random(void)
         unsigned r = rnd() % 100;
         if (r < 30) pad(PADCMDS[rnd() % (sizeof PADCMDS / sizeof *PADCMDS)]);
         else if (r < 60) { int k = KEYS[rnd() % (sizeof KEYS / sizeof *KEYS)]; unsigned m = rnd() % 3 == 0 ? (rnd() & 15) : 0; char s[2] = { (char)ui_key_char(k, false), 0 }; ui_key(&U, k, s, m); }
-        else if (r < 80) ui_pointer(&U, (UiSurf)(rnd() % 4), (int)(rnd() % 760) - 20, (int)(rnd() % 520) - 20, (UiPtr)(rnd() % 4), rnd() & 1 ? BTN_LEFT : BTN_RIGHT);
+        else if (r < 80) ui_pointer(&U, (UiSurf)(rnd() % 5), (int)(rnd() % 760) - 20, (int)(rnd() % 520) - 20, (UiPtr)(rnd() % 4), rnd() & 1 ? BTN_LEFT : BTN_RIGHT);
         else if (r < 82) ui_toast_action(&U, "offer", "x", "Install", (int)(rnd() % 3) + 1, "/storage/downloads/f", 1000 + (int)(rnd() % 9000));
         else if (r < 84) ui_wheel(&U, (UiSurf)(rnd() % 3), (int)(rnd() % 7) - 3);
         else if (r < 90) {
@@ -1075,7 +1188,7 @@ static void t_random(void)
             if (rnd() % 3 == 0) wd_windows_remove(&U.ws, id);
             else wd_windows_update(&U.ws, id, rnd() & 1 ? "foot" : rnd() & 1 ? "swayimg" : "unknown", "w", rnd() % 2);
             ui_windows_changed(&U);
-        } else if (r < 93) { U.sys.bt_available = rnd() & 1; U.sys.usb = (int)(rnd() % 3); }
+        } else if (r < 93) { static const int tv[] = { -1, 0, 60, 90, 120, 300, 1800 }; U.sys.bt_available = rnd() & 1; U.sys.usb = (int)(rnd() % 3); U.sys.screen_timeout = tv[rnd() % 7]; }
         else if (r < 96) { t += (int64_t)(rnd() % 3000); ui_tick(&U, t); }
         else if (r < 98) { char c[8]; snprintf(c, sizeof c, "%d:%02d", (int)(rnd() % 24), (int)(rnd() % 60)); ui_set_clock(&U, c, 40 + (int)(rnd() % 10)); }
         else { UiEffect sink[UI_EFFECTS]; ui_take_effects(&U, sink, UI_EFFECTS); ui_take_dirty(&U); }
@@ -1098,6 +1211,9 @@ int main(void)
     t_menu_scroll();
     t_quick_settings();
     t_quick_pointer();
+    t_settings();
+    t_settings_pointer();
+    t_dock_pointer_under_the_menu();
     t_osk();
     t_osk_pointer_and_focus();
     t_windows();
