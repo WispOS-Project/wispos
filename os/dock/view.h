@@ -90,6 +90,17 @@ VRect view_quick_rect(const QsView *q);
 typedef struct { int row; float frac; } QsHit;   /* row: -1 outside the panel, -2 on it but on no row; frac: 0..1 along a slider's track */
 QsHit view_quick_hit(const QsView *q, int px, int py);
 
+/* ------------------------------------------------------------------ the settings panel */
+/* A window above the strip: a title, a list of categories at the left and the selected category's rows at the right. A row is a setting whose options sit side by side;
+ * `on` is the option that applies, `focus` the one under the pad while the row has it. Drawn from the approved pictures (os/dock/design/settings-*.png). */
+typedef struct { const char *name, *glyph; float level; } SetPage;      /* level: the signal bars of a wifi glyph (0..3) or the charge of a battery glyph (0..1) */
+typedef struct { const char *title, *note; const char *opt[6]; int nopt, on, focus; } SetRow;
+typedef struct { const SetPage *pages; int npages, page; const SetRow *rows; int nrows, row; bool in_content; const Hint *hints; int nhints; } SettingsView;
+int  view_settings_height(void);                         /* the window's height: the screen above the strip */
+void view_settings(const Vctx *v, const SettingsView *s);
+typedef struct { int page, row, opt; } SetHit;           /* page >= 0: a category; row >= 0 and opt >= 0: an option; all -1: nothing under the point */
+SetHit view_settings_hit(const SettingsView *s, int px, int py);
+
 /* ------------------------------------------------------------------ the on-screen keyboard */
 typedef enum { OSK_LOWER, OSK_UPPER, OSK_SYMBOLS } OskPage;
 typedef struct { OskPage page; bool shift, ctrl; int row, col; } OskView;       /* the focus is a (row, column); row 4 is the specials */

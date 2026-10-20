@@ -350,6 +350,65 @@ void view_quick(const Vctx *v, const QsView *q)
     for (int i = 0; i < q->nhints; i++) hx = view_key_pill(v, hx, y1 - foot + 4, q->hints[i].key, q->hints[i].label, PANEL);
 }
 
+/* ------------------------------------------------------------------ the settings panel */
+#define SET_SIDE 176                                      /* the category list's right edge */
+#define SET_ROW_Y(i) (80 + 90 * (i))                      /* a row's title line */
+#define SET_X0 (SET_SIDE + 18)
+#define SET_X1 (WISP_UI_W - 18)
+
+int view_settings_height(void) { return DOCK_TOP; }
+
+void view_settings(const Vctx *v, const SettingsView *s)
+{
+    rd_rrect(v->c, X(v, 0), Y(v, 0), X(v, WISP_UI_W), Y(v, DOCK_TOP), 0, BG);
+    rd_text(v->c, v->f->title, IX(v, 20), IY(v, 22), "Settings", TEXT, RD_LEFT, RD_MIDDLE);
+    rd_hline(v->c, X(v, 0), X(v, WISP_UI_W), Y(v, 44), 1.f, LINE);
+    for (int i = 0; i < s->npages; i++) {
+        int y = 56 + 44 * i;
+        bool on = i == s->page;
+        if (on) rd_rrect(v->c, X(v, 10), Y(v, y), X(v, SET_SIDE - 8), Y(v, y + 40), WISP_UI_RADIUS, FOCUS);
+        RdColor ink = on ? FOCUS_FG : GLYPHC;
+        if (strcmp(s->pages[i].glyph, "battery") == 0) battery(v, 18, 32.f, (float)(y + 20), ink, s->pages[i].level);
+        else view_glyph(v, s->pages[i].glyph, (int)s->pages[i].level, 18, 32.f, (float)(y + 20), ink);
+        rd_text(v->c, v->f->small, IX(v, 52), IY(v, y + 20), s->pages[i].name, on ? FOCUS_FG : TEXT, RD_LEFT, RD_MIDDLE);
+    }
+    rd_vline(v->c, X(v, SET_SIDE), Y(v, 52), Y(v, DOCK_TOP - 10), 1.f, LINE);
+    for (int r = 0; r < s->nrows; r++) {
+        const SetRow *row = &s->rows[r];
+        int y = SET_ROW_Y(r);
+        bool sel = s->in_content && r == s->row;
+        rd_text(v->c, v->f->small_bold, IX(v, SET_X0), IY(v, y), row->title, TEXT, RD_LEFT, RD_MIDDLE);
+        if (row->note) rd_text(v->c, v->f->tiny, IX(v, SET_X0), IY(v, y + 18), row->note, DIM, RD_LEFT, RD_MIDDLE);
+        float w = (float)(SET_X1 - SET_X0) / (float)row->nopt;
+        for (int k = 0; k < row->nopt; k++) {
+            float sx = (float)SET_X0 + (float)k * w;
+            bool on = k == row->on;
+            rd_rrect(v->c, X(v, 0) + sx, Y(v, y + 34), X(v, 0) + sx + w - 4.f, Y(v, y + 64), WISP_UI_RADIUS, (on && sel) ? FOCUS : on ? TEXT : PANEL);
+            if (sel && k == row->focus) rd_rrect_ring(v->c, X(v, 0) + sx, Y(v, y + 34), X(v, 0) + sx + w - 4.f, Y(v, y + 64), WISP_UI_RADIUS, 2.f, ACCENT);
+            rd_text(v->c, v->f->tiny, (int)floorf(X(v, 0) + sx + (w - 4.f) / 2.f + 0.5f), IY(v, y + 49), row->opt[k], on ? FOCUS_FG : DIM, RD_CENTER, RD_MIDDLE);
+        }
+    }
+    int hx = SET_X0;
+    for (int i = 0; i < s->nhints; i++) hx = view_key_pill(v, hx, DOCK_TOP - 32, s->hints[i].key, s->hints[i].label, PANEL);
+}
+
+SetHit view_settings_hit(const SettingsView *s, int px, int py)
+{
+    SetHit none = { -1, -1, -1 };
+    if (py < 0 || py >= DOCK_TOP) return none;
+    for (int i = 0; i < s->npages; i++) {
+        int y = 56 + 44 * i;
+        if (px >= 10 && px < SET_SIDE - 8 && py >= y && py < y + 40) return (SetHit){ i, -1, -1 };
+    }
+    for (int r = 0; r < s->nrows; r++) {
+        int y = SET_ROW_Y(r) + 34;
+        if (py < y || py >= y + 30 || px < SET_X0 || px >= SET_X1) continue;
+        int k = (int)((float)(px - SET_X0) / ((float)(SET_X1 - SET_X0) / (float)s->rows[r].nopt));
+        if (k >= 0 && k < s->rows[r].nopt) return (SetHit){ -1, r, k };
+    }
+    return none;
+}
+
 /* ------------------------------------------------------------------ the on-screen keyboard */
 static const char *const ROWS_LOWER[4] = { "1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm" };
 static const char *const ROWS_UPPER[4] = { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" };

@@ -93,6 +93,15 @@ static void t_ssh_usb(void)
     check_int("usb off", sys_parse_usb("usb: off\nhost: available\n"), 0);
     check_int("computer", sys_parse_usb("usb: computer\ncomputer: on\n"), 1);
     check_int("host", sys_parse_usb("usb: host\n"), 2);
+    check_int("a timeout in seconds", sys_parse_screen_timeout("300\n"), 300);
+    check_int("off is never", sys_parse_screen_timeout("off\n"), 0);
+    check_int("Off in any case", sys_parse_screen_timeout("OFF"), 0);
+    check_int("zero is never too", sys_parse_screen_timeout("0\n"), 0);
+    check_int("a day is allowed", sys_parse_screen_timeout("86400\n"), 86400);
+    check_int("more than a day is not", sys_parse_screen_timeout("86401\n"), -1);
+    check_int("words are not", sys_parse_screen_timeout("soon\n"), -1);
+    check_int("trailing junk is not", sys_parse_screen_timeout("300s\n"), -1);
+    check_int("nothing is not", sys_parse_screen_timeout(""), -1);
     check_int("nothing", sys_parse_usb(""), -1);
     check_int("something else", sys_parse_usb("usb: banana\n"), -1);
     check_int("not at the start", sys_parse_usb("note\nusb: host\n"), -1);

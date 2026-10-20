@@ -188,7 +188,7 @@ class DesktopEntryTests(unittest.TestCase):
             prog = d['Exec'].split()[0]
             self.assertTrue(prog in ours or (tree / prog).exists() or (ROOT / 'usr/bin' / prog).exists(), '%s runs %s' % (name, prog))
             for word in d['Exec'].split()[1:]:
-                if not word.startswith('-') and word not in ('--ctl', 'qs', 'game'): self.assertTrue(word in ours or (tree / word).exists() or (ROOT / 'usr/bin' / word).exists(), '%s runs %s' % (name, word))
+                if not word.startswith('-') and word not in ('--ctl', 'qs', 'settings', 'game'): self.assertTrue(word in ours or (tree / word).exists() or (ROOT / 'usr/bin' / word).exists(), '%s runs %s' % (name, word))
 
 
 class MimeDatabaseTests(unittest.TestCase):

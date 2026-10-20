@@ -587,7 +587,7 @@ def settings_window(c, page, content):
     c.vline(side, 52, DOCK_TOP - 10, LINE)
     content(c, side + 18, W - 18)
     hx = side + 18
-    for key, label in (('A', 'Change'), ('B', 'Back'), ('L1/R1', 'Page')): hx = c.key_pill(hx, DOCK_TOP - 32, key, label)
+    for key, label in (('A', 'Change'), ('B', 'Back'), ('L2/R2', 'Page')): hx = c.key_pill(hx, DOCK_TOP - 32, key, label)
 
 
 def seg_row(c, x0, x1, y, title, note, options, active, sel=False, focus=None):
@@ -601,16 +601,15 @@ def seg_row(c, x0, x1, y, title, note, options, active, sel=False, focus=None):
 
 
 def screen_settings_display(f, wall):
-    c = desktop_base(f, wall); draw_dock(c, PINS, running=['settings'], active='settings')
+    c = desktop_base(f, wall); draw_dock(c, PINS, running=['terminal', 'images'], active='terminal')
     def content(c, x0, x1):
-        seg_row(c, x0, x1, 80, 'Screen timeout', 'Turn the screen off after no input', ['Never', '1 min', '5 min', '10 min', '30 min'], 2, sel=True, focus=3)
-        seg_row(c, x0, x1, 170, 'Steam UI size', 'Game mode (Steam)', ['90 %', '100 %', '125 %', '150 %'], 2)
-        seg_row(c, x0, x1, 260, 'Desktop size', 'Dock, menus and windows', ['100 %', '125 %', '150 %'], 0)
+        seg_row(c, x0, x1, 80, 'Screen timeout', 'Turn the screen off after no input', ['Never', '1 min', '2 min', '5 min', '10 min', '30 min'], 2, sel=True, focus=4)
+        seg_row(c, x0, x1, 170, 'Desktop size', 'Dock, menus and windows', ['100 %', '125 %', '150 %'], 0)
     settings_window(c, 'Display', content); return c
 
 
 def screen_settings_datetime(f, wall):
-    c = desktop_base(f, wall); draw_dock(c, PINS, running=['settings'], active='settings')
+    c = desktop_base(f, wall); draw_dock(c, PINS, running=['terminal', 'images'], active='terminal')
     def content(c, x0, x1):
         c.text((x0, 80), 'Time zone', c.f.small_bold, TEXT, 'lm')
         c.text((x0, 98), 'Current: Europe/Berlin   12:34', c.f.tiny, DIM, 'lm')

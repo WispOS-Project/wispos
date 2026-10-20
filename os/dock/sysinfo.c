@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 static const char *line_end(const char *s) { const char *e = strchr(s, '\n'); return e ? e : s + strlen(s); }
@@ -76,6 +77,16 @@ int sys_parse_usb(const char *out)
     if (!strncmp(m, "computer", 8)) return 1;
     if (!strncmp(m, "host", 4)) return 2;
     return -1;
+}
+
+int sys_parse_screen_timeout(const char *out)
+{
+    while (*out == ' ' || *out == '\t') out++;
+    if (!strncasecmp(out, "off", 3) && (out[3] == 0 || out[3] == '\n' || out[3] == '\r' || out[3] == ' ')) return 0;
+    if (*out < '0' || *out > '9') return -1;
+    long v = 0;
+    while (*out >= '0' && *out <= '9') { v = v * 10 + (*out - '0'); if (v > 86400) return -1; out++; }      /* a day is the most the tool accepts */
+    return (*out == 0 || *out == '\n' || *out == '\r' || *out == ' ') ? (int)v : -1;
 }
 
 static bool read_text(const char *path, char *buf, size_t cap)
