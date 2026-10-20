@@ -39,7 +39,7 @@ def backdrops(fonts_dir):
     def terminal(height=None, typed=None):
         c = mockup.desktop_base(f, wall); mockup.terminal_window(c, height, typed); return c.img
     return {'desktop-empty': mockup.desktop_base(f, wall).img, 'desktop-window': terminal(), 'dock-focus': terminal(), 'dock-more': terminal(), 'apps-menu': terminal(),
-            'quick-settings': terminal(), 'osk': terminal(mockup.token('WISP_UI_OSK_Y'), 'wisp-usb sta'), 'osk-symbols': terminal(mockup.token('WISP_UI_OSK_Y'), 'ls -la /storage/')}
+            'quick-settings': terminal(), 'quick-settings-submenu': terminal(), 'osk': terminal(mockup.token('WISP_UI_OSK_Y'), 'wisp-usb sta'), 'osk-symbols': terminal(mockup.token('WISP_UI_OSK_Y'), 'ls -la /storage/')}
 
 
 # (what it breaks, the text in view.c, what it becomes)
@@ -58,7 +58,13 @@ VIEW_MUTANTS = [
     ('the menu scrim is thin', 'RD_RGBA(WISP_UI_BG, WISP_UI_MENU_SCRIM)', 'RD_RGBA(WISP_UI_BG, 200)'),
     ('the selected menu tile is not white', 'sel ? FOCUS : PANEL);\n        view_icon', 'PANEL);\n        view_icon'),
     ('the slider knob is smaller', '(float)WISP_UI_SLIDER_KNOB', '5.f'),
-    ('the segments are narrower', 'float seg_w = (float)(pw - 20 - 20) / 3.f;\n                for (int k = 0; k < r->nseg', 'float seg_w = (float)(pw - 20 - 24) / 3.f;\n                for (int k = 0; k < r->nseg'),
+    ('a link row has no chevron', 'view_glyph(v, "right", 0, 18, (float)(x0 + pw - 28), (float)top, sel ? FOCUS_FG : DIM);', '(void)0;'),
+    ('the submenu panel follows its rows', 'if (q->height > 0) return q->height;', ''),
+    ('the back row has no chevron', 'view_glyph(v, "left", 0, 18, (float)(x0 + 28), (float)top, sel ? FOCUS_FG : GLYPHC);', '(void)0;'),
+    ('a mode has no second line', 'if (r->value) rd_text_fit(v->c, v->f->tiny, IX(v, x0 + 36), IY(v, top + 11), pw - 36 - 56, r->value, dim, RD_LEFT, RD_MIDDLE);', '(void)0;'),
+    ('the mode that is on has no mark', 'r->on ? (sel ? FOCUS_FG : ACCENT) : BG);', 'BG);'),
+    ('the submenu note is one pixel low', 'IY(v, y + 6), r->label, DIM, RD_LEFT, RD_MIDDLE);', 'IY(v, y + 7), r->label, DIM, RD_LEFT, RD_MIDDLE);'),
+    ('a mode row is not one and a half rows high', 'if (r->kind == QS_CHOICE) return rh + rh / 2;', 'if (r->kind == QS_CHOICE) return rh + 10;'),
     ('the quick settings hints sit higher', 'view_key_pill(v, hx, y1 - foot + 4,', 'view_key_pill(v, hx, y1 - foot + 2,'),
     ('the keyboard rows are one pixel further apart', 'int y = WISP_UI_OSK_Y + 8 + row * (WISP_UI_KEY_H + WISP_UI_KEY_GAP);', 'int y = WISP_UI_OSK_Y + 8 + row * (WISP_UI_KEY_H + WISP_UI_KEY_GAP + 1);'),
     ('the keyboard special row is shifted', '*out = (VRect){ x, y, x + k.width, y + WISP_UI_KEY_H };', '*out = (VRect){ x + (row == 4), y, x + (row == 4) + k.width, y + WISP_UI_KEY_H };'),
@@ -126,7 +132,7 @@ class ViewTests(unittest.TestCase):
         r = subprocess.run([sys.executable, '-I', str(DOCK / 'gen_glyphs.py'), '--check'], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    SCENES = {'desktop-empty': [(436, 258, 460, 290)], 'desktop-window': [], 'dock-focus': [], 'dock-more': [], 'apps-menu': [], 'quick-settings': [(640, 222, 690, 258)], 'osk': [], 'osk-symbols': []}
+    SCENES = {'desktop-empty': [(436, 258, 460, 290)], 'desktop-window': [], 'dock-focus': [], 'dock-more': [], 'apps-menu': [], 'quick-settings': [], 'quick-settings-submenu': [], 'osk': [], 'osk-symbols': []}
 
     def test_the_comparison_notices_changes_to_the_views(self):
         """Each of these edits of view.c (a missing bar, a shifted row, a wrong colour ...) must make at least one scene fail, or the comparison above could not be relied on."""
@@ -153,7 +159,8 @@ class ViewTests(unittest.TestCase):
     def test_quick_settings(self):
         # The picture's SSH switch is an ellipse: mockup.py's _rr() turns a radius of half the height into the full height, and Pillow then draws an oval. The language document says
         # "switches are 40 x 22 pills", and the shell draws the pill; the box is the switch's.
-        self.compare('quick-settings', ignore=[(640, 222, 690, 258)])
+        self.compare('quick-settings', ignore=[(640, 258, 690, 292)])
+    def test_quick_settings_submenu(self): self.compare('quick-settings-submenu')
     def test_osk(self):                  self.compare('osk')
     def test_osk_symbols(self):          self.compare('osk-symbols')
 

@@ -495,7 +495,7 @@ class ShellTests(unittest.TestCase):
         # the volume row: the track runs from x = 458 to x = 684 on the second row from the top of the panel
         y = None
         shot = self.rig.grim()
-        for yy in range(100, 400):                       # find the slider track by its accent colour at the knob side
+        for yy in range(130, 400):                       # find the slider track by its accent colour at the knob side (the Wi-Fi row above, selected and white, is not it)
             if tuple(shot[yy, 460]) != tuple(shot[yy, 300]) and abs(int(shot[yy, 560][2]) - 255) < 40: y = yy; break
         self.assertIsNotNone(y, 'the volume slider is on the screen')
         self.pointer.move(458 + (684 - 458) // 4, y); self.pointer.down()

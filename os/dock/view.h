@@ -71,7 +71,9 @@ void view_menu(const Vctx *v, const MenuView *m);
 int  view_menu_hit(const MenuView *m, int px, int py);                                  /* the entry whose cell (tile and name) holds the point, or -1 */
 
 /* ------------------------------------------------------------------ the quick settings */
-typedef enum { QS_TEXT, QS_SWITCH, QS_SLIDER, QS_SEGMENTS } QsKind;
+typedef enum { QS_TEXT, QS_SWITCH, QS_SLIDER, QS_LINK, QS_BACK, QS_CHOICE, QS_NOTE } QsKind;
+/* QS_LINK: a row that opens a submenu: label, the current value at the right and a chevron. QS_BACK: the first row of a submenu: a left chevron and the title in bold (label).
+ * QS_CHOICE: a row of a submenu: label, a second line (value) and a mark at the right when `on`. QS_NOTE: a line of small text on no row (label); it is never selected. */
 typedef struct {
     QsKind kind;
     const char *glyph;
@@ -80,15 +82,12 @@ typedef struct {
     const char *value;          /* TEXT: at the right; SWITCH: a second line under the label (or NULL) */
     bool on;                    /* SWITCH */
     float slider;               /* SLIDER 0..1; for the battery glyph, the charge 0..1 */
-    const char *seg[3];         /* SEGMENTS: the names, and which is on, with a note at the right of the row */
-    int nseg, seg_on;
-    const char *note;
 } QsRow;
-typedef struct { const QsRow *rows; int n, selected; const Hint *hints; int nhints; } QsView;
+typedef struct { const QsRow *rows; int n, selected; const Hint *hints; int nhints; int height; } QsView;   /* height: the panel's height when it must not follow its rows (a submenu keeps the list's size), else 0 */
 int  view_quick_height(const QsView *q);              /* the panel's height */
 void view_quick(const Vctx *v, const QsView *q);      /* above the strip's right end */
 VRect view_quick_rect(const QsView *q);
-typedef struct { int row; int part; float frac; } QsHit;   /* row: -1 outside the panel, -2 on it but on no row; part: the segment under the point; frac: 0..1 along a slider's track */
+typedef struct { int row; float frac; } QsHit;   /* row: -1 outside the panel, -2 on it but on no row; frac: 0..1 along a slider's track */
 QsHit view_quick_hit(const QsView *q, int px, int py);
 
 /* ------------------------------------------------------------------ the on-screen keyboard */

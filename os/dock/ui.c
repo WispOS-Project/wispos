@@ -184,7 +184,7 @@ static void qs_open(Ui *u, bool from_pad)
     u->dock = UI_QS;
     u->from_pad = from_pad;
     u->qs_sel = 0;
-    u->usb_sel = u->sys.usb;
+    u->qs_page = 0;
     u->dragging = false;
     for (int i = 0; i < u->n; i++) if (u->items[i].kind == WD_STATUS) set_focus(u, i);
     eff(u, EFF_REFRESH, 0, 0, 0, 0, NULL);
@@ -341,15 +341,17 @@ static void menu_key(Ui *u, int code, const char *utf8, unsigned mods)
 }
 
 /* ------------------------------------------------------------------ the quick settings */
-static int qs_selectable(int row) { return row >= 0 && row <= 5; }          /* the battery row is information */
+enum { QS_PAGE_LIST = 0, QS_PAGE_USB = 1 };
+/* The battery row of the list is information; in the USB submenu the selectable rows are the back row and the three modes (the note under them is text). */
+static bool qs_selectable(const Ui *u, int row) { return u->qs_page == QS_PAGE_USB ? (row >= 0 && row <= 3) : (row >= 0 && row <= 5); }
 static void qs_build(const Ui *u, QsRow rows[UI_QS_ROWS], char text[UI_QS_ROWS][64], Hint hints[2], QsView *out);
 
 static void qs_adjust(Ui *u, int dir)
 {
+    if (u->qs_page != QS_PAGE_LIST) return;
     switch (u->qs_sel) {
     case 2: u->sys.volume = clampf(u->sys.volume + (float)dir * VOLUME_STEP, 0.f, 1.f); eff(u, EFF_SET_VOLUME, 0, 0, 0, u->sys.volume, NULL); break;
     case 3: u->sys.brightness = clampf(u->sys.brightness + (float)dir * VOLUME_STEP, BRIGHTNESS_MIN, 1.f); eff(u, EFF_SET_BRIGHTNESS, 0, 0, 0, u->sys.brightness, NULL); break;
-    case 5: u->usb_sel = clampi(u->usb_sel + dir, 0, 2); break;
     case 1: if (u->sys.bt_available && (dir > 0) != u->sys.bt_on) { u->sys.bt_on = dir > 0; eff(u, EFF_SET_BLUETOOTH, u->sys.bt_on, 0, 0, 0, NULL); } break;
     case 4: if ((dir > 0) != u->sys.ssh_on) { u->sys.ssh_on = dir > 0; eff(u, EFF_SET_SSH, u->sys.ssh_on, 0, 0, 0, NULL); } break;
     default: break;
@@ -357,13 +359,26 @@ static void qs_adjust(Ui *u, int dir)
     dirty(u, DIRTY_DOCK);
 }
 
+static void qs_page_set(Ui *u, int page, int sel)
+{
+    u->qs_page = page;
+    u->qs_sel = sel;
+    u->dragging = false;
+    dirty(u, DIRTY_DOCK);
+}
+
 static void qs_change(Ui *u)                                                 /* A: act on the selected row */
 {
+    if (u->qs_page == QS_PAGE_USB) {                                        /* the back row, or a mode: apply it and return to the list with the USB row selected */
+        if (u->qs_sel >= 1 && u->qs_sel <= 3 && u->qs_sel - 1 != u->sys.usb) { u->sys.usb = u->qs_sel - 1; eff(u, EFF_SET_USB, u->sys.usb, 0, 0, 0, NULL); }
+        qs_page_set(u, QS_PAGE_LIST, 5);
+        return;
+    }
     switch (u->qs_sel) {
     case 0: eff(u, EFF_WIFI, 0, 0, 0, 0, NULL); break;
     case 1: if (u->sys.bt_available) { u->sys.bt_on = !u->sys.bt_on; eff(u, EFF_SET_BLUETOOTH, u->sys.bt_on, 0, 0, 0, NULL); } break;
     case 4: u->sys.ssh_on = !u->sys.ssh_on; eff(u, EFF_SET_SSH, u->sys.ssh_on, 0, 0, 0, NULL); break;
-    case 5: if (u->usb_sel != u->sys.usb) { u->sys.usb = u->usb_sel; eff(u, EFF_SET_USB, u->usb_sel, 0, 0, 0, NULL); } break;
+    case 5: qs_page_set(u, QS_PAGE_USB, 1 + clampi(u->sys.usb, 0, 2)); return;     /* the submenu opens with the current mode selected */
     default: break;
     }
     dirty(u, DIRTY_DOCK);
@@ -374,15 +389,14 @@ static void qs_key(Ui *u, int code)
     switch (code) {
     case KEY_UP: case KEY_DOWN: {
         int d = code == KEY_UP ? -1 : 1, r = u->qs_sel + d;
-        if (qs_selectable(r)) u->qs_sel = r;
-        if (u->qs_sel == 5) u->usb_sel = u->sys.usb;
+        if (qs_selectable(u, r)) u->qs_sel = r;
         dirty(u, DIRTY_DOCK);
         break;
     }
-    case KEY_LEFT: qs_adjust(u, -1); break;
+    case KEY_LEFT: if (u->qs_page == QS_PAGE_USB) qs_page_set(u, QS_PAGE_LIST, 5); else qs_adjust(u, -1); break;
     case KEY_RIGHT: qs_adjust(u, 1); break;
     case KEY_ENTER: case KEY_KPENTER: qs_change(u); break;
-    case KEY_ESC: panel_back(u); break;
+    case KEY_ESC: if (u->qs_page == QS_PAGE_USB) qs_page_set(u, QS_PAGE_LIST, 5); else panel_back(u); break;
     default: break;
     }
 }
@@ -551,20 +565,20 @@ static void pointer_dock(Ui *u, int x, int y, UiPtr ev, int button)
                 if (u->qs_sel == 2) { u->sys.volume = t; eff(u, EFF_SET_VOLUME, 0, 0, 0, t, NULL); }
                 else if (u->qs_sel == 3) { u->sys.brightness = clampf(t, BRIGHTNESS_MIN, 1.f); eff(u, EFF_SET_BRIGHTNESS, 0, 0, 0, u->sys.brightness, NULL); }
                 dirty(u, DIRTY_DOCK);
-            } else if (h.row >= 0 && qs_selectable(h.row) && u->qs_sel != h.row) {
+            } else if (h.row >= 0 && qs_selectable(u, h.row) && u->qs_sel != h.row) {
                 u->qs_sel = h.row;
                 dirty(u, DIRTY_DOCK);
             }
             if (in_strip && hit != u->hover) { u->hover = hit; dirty(u, DIRTY_DOCK); }
         } else if (ev == PTR_DOWN && button == BTN_LEFT) {
-            if (h.row >= 0 && qs_selectable(h.row)) {
+            if (h.row >= 0 && qs_selectable(u, h.row)) {
                 u->qs_sel = h.row;
-                if (h.row == 2 || h.row == 3) {
+                if (u->qs_page == QS_PAGE_USB) qs_change(u);
+                else if (h.row == 2 || h.row == 3) {
                     u->dragging = true;
                     if (h.row == 2) { u->sys.volume = h.frac; eff(u, EFF_SET_VOLUME, 0, 0, 0, h.frac, NULL); }
                     else { u->sys.brightness = clampf(h.frac, BRIGHTNESS_MIN, 1.f); eff(u, EFF_SET_BRIGHTNESS, 0, 0, 0, u->sys.brightness, NULL); }
-                } else if (h.row == 5) { u->usb_sel = h.part; qs_change(u); }
-                else qs_change(u);
+                } else qs_change(u);
                 dirty(u, DIRTY_DOCK);
             } else if (h.row == -1) {                                                                  /* outside the panel */
                 if (in_strip && hit >= 0 && u->items[hit].kind != WD_STATUS) { dock_close(u); item_activate(u, hit); }
@@ -760,23 +774,37 @@ static const char *bar_label(const Ui *u, const WdItem *it, char which)
     }
 }
 
+static const char *const USB_NAMES[3] = { "Off", "Computer", "Host" };
+static const char *const USB_NOTES[3] = { "port unpowered, no data", "the handheld is a device", "powers a connected device" };
+
 static void qs_build(const Ui *u, QsRow rows[UI_QS_ROWS], char text[UI_QS_ROWS][64], Hint hints[2], QsView *out)
 {
     const UiSys *s = &u->sys;
     int vol = volume_level(s);
     fmt_into(text[0], 64, "%s", s->ssid[0] ? s->ssid : "Not connected");
-    rows[0] = (QsRow){ QS_TEXT, "wifi", s->wifi, "Wi-Fi", text[0], false, 0, { 0 }, 0, 0, NULL };
-    rows[1] = (QsRow){ QS_SWITCH, "bluetooth", 0, "Bluetooth", s->bt_available ? NULL : "Not available", s->bt_on, 0, { 0 }, 0, 0, NULL };
-    rows[2] = (QsRow){ QS_SLIDER, "volume", vol, "Volume", NULL, false, s->volume, { 0 }, 0, 0, NULL };
-    rows[3] = (QsRow){ QS_SLIDER, "brightness", 0, "Brightness", NULL, false, s->brightness, { 0 }, 0, 0, NULL };
-    rows[4] = (QsRow){ QS_SWITCH, "ssh", 0, "SSH", s->ssh_addr[0] ? s->ssh_addr : NULL, s->ssh_on, 0, { 0 }, 0, 0, NULL };
-    rows[5] = (QsRow){ QS_SEGMENTS, "usb", 0, "USB port", NULL, false, 0, { "Off", "Computer", "Host" }, 3, u->usb_sel, "off at every boot" };
+    rows[0] = (QsRow){ QS_LINK, "wifi", s->wifi, "Wi-Fi", text[0], false, 0 };
+    rows[1] = (QsRow){ QS_SWITCH, "bluetooth", 0, "Bluetooth", s->bt_available ? NULL : "Not available", s->bt_on, 0 };
+    rows[2] = (QsRow){ QS_SLIDER, "volume", vol, "Volume", NULL, false, s->volume };
+    rows[3] = (QsRow){ QS_SLIDER, "brightness", 0, "Brightness", NULL, false, s->brightness };
+    rows[4] = (QsRow){ QS_SWITCH, "ssh", 0, "SSH", s->ssh_addr[0] ? s->ssh_addr : NULL, s->ssh_on, 0 };
+    rows[5] = (QsRow){ QS_LINK, "usb", 0, "USB port", USB_NAMES[clampi(s->usb, 0, 2)], false, 0 };
     if (s->battery >= 0.f) fmt_into(text[6], 64, "%d %%  %s", (int)(s->battery * 100.f + 0.5f), s->charging ? "charging" : "discharging");
     else fmt_into(text[6], 64, "No battery");
-    rows[6] = (QsRow){ QS_TEXT, "battery", 0, "Battery", text[6], false, s->battery < 0.f ? 0.f : s->battery, { 0 }, 0, 0, NULL };
-    hints[0] = (Hint){ "A", "Change" };
-    hints[1] = (Hint){ "B", "Close" };
-    *out = (QsView){ rows, UI_QS_ROWS, u->qs_sel, hints, 2 };
+    rows[6] = (QsRow){ QS_TEXT, "battery", 0, "Battery", text[6], false, s->battery < 0.f ? 0.f : s->battery };
+    QsView list = { rows, UI_QS_ROWS, u->qs_sel, hints, 2, 0 };
+    if (u->qs_page == QS_PAGE_LIST) {
+        hints[0] = (Hint){ "A", "Change" };
+        hints[1] = (Hint){ "B", "Close" };
+        *out = list;
+        return;
+    }
+    int height = view_quick_height(&list);                                   /* the submenu keeps the list's size and place: nothing moves when it opens */
+    rows[0] = (QsRow){ QS_BACK, NULL, 0, "USB port", NULL, false, 0 };
+    for (int k = 0; k < 3; k++) rows[1 + k] = (QsRow){ QS_CHOICE, NULL, 0, USB_NAMES[k], USB_NOTES[k], s->usb == k, 0 };
+    rows[4] = (QsRow){ QS_NOTE, NULL, 0, "Off again at every boot.", NULL, false, 0 };
+    hints[0] = (Hint){ "A", "Choose" };
+    hints[1] = (Hint){ "B", "Back" };
+    *out = (QsView){ rows, 5, u->qs_sel, hints, 2, height };
 }
 
 void ui_make_views(const Ui *u, UiViews *vw)

@@ -94,7 +94,8 @@ struct Ui {
     int hover, press;
     WdAction acts[UI_ACTIONS];
     int nacts, act_sel;
-    int qs_sel, usb_sel;
+    int qs_sel;
+    int qs_page;                    /* 0 the list of rows, 1 the USB port submenu (the panel keeps its size, its content changes) */
     bool dragging;                  /* a slider is being dragged with the pointer */
 
     bool menu;
