@@ -611,7 +611,7 @@ def screen_settings_display(f, wall):
 def screen_settings_datetime(f, wall):
     c = desktop_base(f, wall); draw_dock(c, PINS, running=['settings'], active='settings')
     def content(c, x0, x1):
-        c.text((x0, 80), 'Time zone', f.small_bold, TEXT, 'lm') if False else c.text((x0, 80), 'Time zone', c.f.small_bold, TEXT, 'lm')
+        c.text((x0, 80), 'Time zone', c.f.small_bold, TEXT, 'lm')
         c.text((x0, 98), 'Current: Europe/Berlin   12:34', c.f.tiny, DIM, 'lm')
         for i, z in enumerate(('Europe/Berlin', 'Europe/Lisbon', 'Europe/London', 'America/New_York', 'America/Chicago')):
             y = 118 + i * 38; sel = i == 2
