@@ -1,0 +1,16 @@
+#!/bin/sh
+# wisp-power can-sleep|sleep|restart|shutdown: the one path the desktop shell (and anything else) uses for power actions. It takes exactly one of these words and nothing else, so no
+# caller can hand systemd anything of its own.
+#   can-sleep  prints `sleep: yes` when the kernel offers suspend-to-RAM (`mem` in /sys/power/state), else `sleep: no`; the shell shows the Sleep row only on `yes`
+#   sleep      suspend to RAM (refused with exit 3 and a message when can-sleep says no, so a dead control never pretends to work)
+#   restart    reboot through the normal shutdown path        shutdown   power off through the normal shutdown path
+STATE=${WISP_POWER_STATE:-/sys/power/state}; SYSTEMCTL=${WISP_SYSTEMCTL:-systemctl}
+can_sleep() { grep -qw mem "$STATE" 2>/dev/null; }
+[ "$#" -eq 1 ] || { echo "usage: wisp-power can-sleep|sleep|restart|shutdown" >&2; exit 2; }
+case "$1" in
+    can-sleep) if can_sleep; then echo "sleep: yes"; else echo "sleep: no"; fi ;;
+    sleep) can_sleep || { echo "wisp-power: this kernel offers no suspend-to-RAM" >&2; exit 3; }; exec "$SYSTEMCTL" suspend ;;
+    restart) exec "$SYSTEMCTL" reboot ;;
+    shutdown) exec "$SYSTEMCTL" poweroff ;;
+    *) echo "usage: wisp-power can-sleep|sleep|restart|shutdown" >&2; exit 2 ;;
+esac
