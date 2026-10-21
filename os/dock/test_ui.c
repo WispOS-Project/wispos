@@ -98,7 +98,7 @@ static const char *effs(void)
     buf[0] = 0;
     size_t o = 0;
     for (int i = 0; i < n; i++) {
-        char w[160];
+        char w[640];
         switch (e[i].kind) {
         case EFF_LAUNCH: snprintf(w, sizeof w, "launch:%s", app_name(e[i].a)); break;
         case EFF_ACTIVATE: snprintf(w, sizeof w, "activate:%d", e[i].a); break;
@@ -118,6 +118,8 @@ static const char *effs(void)
         case EFF_REFRESH: snprintf(w, sizeof w, "refresh"); break;
         case EFF_BROWSER_ACTIONS: snprintf(w, sizeof w, "browser-actions"); break;
         case EFF_DOWNLOAD: snprintf(w, sizeof w, "download:%d:%s", e[i].a, e[i].s); break;
+        case EFF_AG_LIST: snprintf(w, sizeof w, "ag-list:%s", U.ag_dir); break;
+        case EFF_AG_ADD: snprintf(w, sizeof w, "ag-add:%s|%s", U.ag_name, U.ag_exe); break;
         default: snprintf(w, sizeof w, "?%d", e[i].kind); break;
         }
         o += (size_t)snprintf(buf + o, sizeof buf - o, "%s%s", o ? " " : "", w);
@@ -675,6 +677,207 @@ static void t_settings(void)
     pad("menu");
 }
 
+/* ------------------------------------------------------------------ the Add game window (issue #46) */
+static UiAgEntry ent(const char *name, bool dir, unsigned kb) { UiAgEntry e; memset(&e, 0, sizeof e); snprintf(e.name, sizeof e.name, "%s", name); e.dir = dir; e.kb = kb; return e; }
+
+static void ag_places(void)
+{
+    ui_ag_clear_places(&U);
+    ui_ag_add_place(&U, "SD card 2", "116.9 GB free", "/cards/two/");
+    ui_ag_add_place(&U, "Internal", "38.7 GB free", "/storage/games");
+}
+
+static void t_addgame(void)
+{
+    fresh(true);
+    ui_ag_clear_places(&U);
+    pad("addgame");
+    check_true("with no storage the window does not open", !U.settings);
+    check_true("and says so", U.toast.on);
+    fresh(true);
+    ag_places();
+    pad("addgame");
+    check_true("opened", U.settings && U.win == 1);
+    check_str("the first place is listed", U.ag_dir, "/cards/two");
+    EXPECT("the listing is asked for", "ag-list:/cards/two");
+    UiGeom g = ui_geometry(&U);
+    check_true("its surface is the Settings window's", g.settings_visible);
+    ui_ag_entries(&U, "/elsewhere", (UiAgEntry[]){ ent("Late", true, 0) }, 1);
+    check_int("an answer for another folder is ignored", U.ag_n, 0);
+    UiAgEntry raw[] = { ent("readme.txt", false, 3), ent("Zeta", true, 0), ent("alpha", true, 0), ent(".hidden", true, 0), ent("WoW.exe", false, 4663), ent("setup.EXE", false, 900), ent("data.bin", false, 9), ent("notes.exe.bak", false, 1) };
+    ui_ag_entries(&U, "/cards/two", raw, 8);
+    check_int("folders and programs only, the way up only below the root: 2 folders + 2 programs", U.ag_n, 4);
+    check_str("folders first, sorted without regard to case", U.ag_e[0].name, "alpha");
+    check_str("then the other folder", U.ag_e[1].name, "Zeta");
+    check_str("then the programs", U.ag_e[2].name, "setup.EXE");
+    check_str("in order", U.ag_e[3].name, "WoW.exe");
+    check_int("the pad starts in the places", U.ag_in, 0);
+    UiViews *hv = malloc(sizeof *hv);
+    ui_make_views(&U, hv);
+    check_str("B closes from the places", hv->ag_hints[1].label, "Close");
+    U.ag_in = true; ui_make_views(&U, hv);
+    check_str("B goes up from the listing", hv->ag_hints[1].label, "Up");
+    U.ag_in = false;
+    free(hv);
+    key(KEY_DOWN);
+    EXPECT("down moves to the next place and lists it", "ag-list:/storage/games");
+    check_int("the second place", U.ag_place, 1);
+    key(KEY_UP);
+    EXPECT("up goes back and lists it", "ag-list:/cards/two");
+    key(KEY_UP);
+    EXPECT("up at the first place does nothing", "");
+    ui_ag_entries(&U, "/cards/two", raw, 8);
+    key(KEY_RIGHT);
+    check_true("right enters the listing", U.ag_in);
+    check_int("on the first entry", U.ag_sel, 0);
+    key(KEY_DOWN); key(KEY_DOWN); key(KEY_DOWN); key(KEY_DOWN);
+    check_int("down stops at the last entry", U.ag_sel, 3);
+    key(KEY_UP); key(KEY_UP); key(KEY_UP);
+    key(KEY_ENTER);
+    check_str("A on a folder opens it", U.ag_dir, "/cards/two/alpha");
+    EXPECT("and asks for it", "ag-list:/cards/two/alpha");
+    ui_ag_entries(&U, "/cards/two/alpha", (UiAgEntry[]){ ent("game.exe", false, 2048), ent("Maps", true, 0) }, 2);
+    check_str("below the root the way up comes first", U.ag_e[0].name, "..");
+    check_int("and is not selected: the first real entry is", U.ag_sel, 1);
+    key(KEY_ESC);
+    check_str("B goes up one folder", U.ag_dir, "/cards/two");
+    EXPECT("and lists it", "ag-list:/cards/two");
+    ui_ag_entries(&U, "/cards/two", raw, 8);
+    key(KEY_ENTER);
+    check_str("A opens the first folder again", U.ag_dir, "/cards/two/alpha");
+    effs();
+    ui_ag_entries(&U, "/cards/two/alpha", (UiAgEntry[]){ ent("game.exe", false, 2048) }, 1);
+    key(KEY_LEFT);
+    check_str("left also goes up", U.ag_dir, "/cards/two");
+    effs();
+    ui_ag_entries(&U, "/cards/two", raw, 8);
+    key(KEY_LEFT);
+    check_true("left at the top of a place returns to the places", !U.ag_in);
+    key(KEY_RIGHT); key(KEY_DOWN); key(KEY_DOWN); key(KEY_DOWN);
+    key(KEY_ENTER);
+    check_int("A on a program asks to confirm", U.ag_phase, 1);
+    check_str("the name is the file's name without .exe", U.ag_name, "WoW");
+    check_str("the program is the full path", U.ag_exe, "/cards/two/WoW.exe");
+    check_int("the focus is on Add to Steam", U.ag_opt, 1);
+    EXPECT("nothing is added yet", "");
+    key(KEY_LEFT);
+    check_int("left focuses Cancel", U.ag_opt, 0);
+    key(KEY_ENTER);
+    check_int("Cancel returns to the listing", U.ag_phase, 0);
+    EXPECT("and adds nothing", "");
+    key(KEY_ENTER);
+    key(KEY_ESC);
+    check_int("B on the confirmation also returns", U.ag_phase, 0);
+    key(KEY_ENTER);
+    key(KEY_ENTER);
+    EXPECT("Add to Steam hands name and program to the shell", "ag-add:WoW|/cards/two/WoW.exe");
+    check_int("the window waits for the answer", U.ag_phase, 1);
+    ui_ag_added(&U, true, NULL);
+    check_int("then says it is added", U.ag_phase, 2);
+    key(KEY_ESC);
+    check_int("B stays here, back in the listing", U.ag_phase, 0);
+    check_true("the window is still open", U.settings);
+    key(KEY_ENTER); key(KEY_ENTER); effs(); ui_ag_added(&U, true, NULL);
+    key(KEY_ENTER);
+    EXPECT("A goes to Game mode", "game");
+    check_true("and the window closes", !U.settings);
+
+    ag_places(); pad("addgame"); effs();
+    ui_ag_entries(&U, "/cards/two", raw, 8);
+    key(KEY_RIGHT); key(KEY_DOWN); key(KEY_DOWN); key(KEY_DOWN); key(KEY_ENTER); key(KEY_ENTER); effs();
+    ui_ag_added(&U, false, "Steam is running; stop it first.");
+    check_int("a refusal returns to the listing", U.ag_phase, 0);
+    check_true("with a toast that says why", U.toast.on && strstr(U.toast.text, "Steam is running") != NULL);
+    key(KEY_ESC);
+    check_true("B in the listing at the top of a place returns to the places", !U.ag_in && U.settings);
+    key(KEY_ESC);
+    check_true("B in the places closes the window", !U.settings);
+    pad("addgame"); pad("addgame");
+    check_true("the command toggles it", !U.settings);
+    ag_places(); pad("addgame"); pad("menu");
+    check_true("the menu replaces it", !U.settings && U.menu);
+    pad("menu"); effs();
+    pad("addgame"); pad("settings");
+    check_true("Settings replaces it and is the Settings window", U.settings && U.win == 0);
+
+    ag_places(); pad("settings"); pad("settings"); pad("addgame"); effs();
+    char longname[WD_NAME]; memset(longname, 'a', sizeof longname - 1); longname[sizeof longname - 1] = 0;
+    char longdir[WD_PATH]; memset(longdir, 'd', sizeof longdir - 1); longdir[sizeof longdir - 1] = 0;
+    snprintf(U.ag_dir, sizeof U.ag_dir, "%s", longdir);
+    ui_ag_entries(&U, longdir, (UiAgEntry[]){ ent(longname, true, 0) }, 1);
+    U.ag_in = true; U.ag_sel = 1 < U.ag_n ? 1 : 0;
+    key(KEY_ENTER);
+    check_true("a path that would not fit is refused, not cut", U.toast.on && strstr(U.toast.title, "too long") != NULL);
+}
+
+static void t_addgame_pointer(void)
+{
+    fresh(true);
+    ag_places();
+    pad("addgame"); effs();
+    UiAgEntry raw[] = { ent("alpha", true, 0), ent("WoW.exe", false, 4663) };
+    ui_ag_entries(&U, "/cards/two", raw, 2);
+    ui_pointer(&U, SURF_SETTINGS, 80, 56 + 50 + 20, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on the second place lists it", "ag-list:/storage/games");
+    ui_pointer(&U, SURF_SETTINGS, 80, 56 + 20, PTR_DOWN, BTN_LEFT);
+    EXPECT("and on the first lists that", "ag-list:/cards/two");
+    ui_ag_entries(&U, "/cards/two", raw, 2);
+    ui_pointer(&U, SURF_SETTINGS, 400, 82 + 19, PTR_DOWN, BTN_RIGHT);
+    EXPECT("a right click on a row does nothing", "");
+    ui_pointer(&U, SURF_SETTINGS, 400, 82 + 42 + 19, PTR_DOWN, BTN_LEFT);
+    check_int("a click on a program asks to confirm", U.ag_phase, 1);
+    ui_pointer(&U, SURF_SETTINGS, 80, 56 + 20, PTR_DOWN, BTN_LEFT);
+    check_int("a click on a place leaves the confirmation", U.ag_phase, 0);
+    EXPECT("and lists it", "ag-list:/cards/two");
+    ui_ag_entries(&U, "/cards/two", raw, 2);
+    ui_pointer(&U, SURF_SETTINGS, 400, 82 + 42 + 19, PTR_DOWN, BTN_LEFT);
+    int bw = 150, x1 = WISP_UI_W - 18, cancel = x1 - 2 * bw - 10 + bw / 2, add = x1 - bw + bw / 2, by = 260 + 17;
+    ui_pointer(&U, SURF_SETTINGS, cancel, by, PTR_DOWN, BTN_LEFT);
+    check_int("a click on Cancel returns", U.ag_phase, 0);
+    EXPECT("adding nothing", "");
+    ui_pointer(&U, SURF_SETTINGS, 400, 82 + 42 + 19, PTR_DOWN, BTN_LEFT);
+    ui_pointer(&U, SURF_SETTINGS, 400, 100, PTR_DOWN, BTN_LEFT);
+    check_int("a click beside the buttons does nothing", U.ag_phase, 1);
+    ui_pointer(&U, SURF_SETTINGS, add, by, PTR_DOWN, BTN_RIGHT);
+    EXPECT("a right click on Add does nothing", "");
+    ui_pointer(&U, SURF_SETTINGS, add, by, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on Add adds", "ag-add:WoW|/cards/two/WoW.exe");
+    ui_ag_added(&U, true, NULL);
+    int dx0 = (WISP_UI_W - 400) / 2, dy = (WISP_UI_H - WISP_UI_DOCK_H - 116) / 2 + 116 - 26;
+    ui_pointer(&U, SURF_SETTINGS, 80, 56 + 20, PTR_DOWN, BTN_LEFT);
+    check_int("while the dialog is up a click on a place is ignored", U.ag_phase, 2);
+    ui_pointer(&U, SURF_SETTINGS, dx0 + 300, dy, PTR_DOWN, BTN_LEFT);
+    check_int("a click on Stay here returns to the listing", U.ag_phase, 0);
+    ui_pointer(&U, SURF_SETTINGS, 400, 82 + 42 + 19, PTR_DOWN, BTN_LEFT);
+    ui_pointer(&U, SURF_SETTINGS, add, by, PTR_DOWN, BTN_LEFT); effs();
+    ui_ag_added(&U, true, NULL);
+    ui_pointer(&U, SURF_SETTINGS, dx0 + 60, dy, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on Game mode goes there", "game");
+    check_true("and closes the window", !U.settings);
+    ui_pointer(&U, SURF_SETTINGS, 400, 100, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click with the window closed does nothing", "");
+
+    ag_places(); pad("addgame"); effs();
+    UiAgEntry many[40];
+    for (int i = 0; i < 40; i++) { char n[32]; snprintf(n, sizeof n, "dir%02d", i); many[i] = ent(n, true, 0); }
+    ui_ag_entries(&U, "/cards/two", many, 40);
+    ui_wheel(&U, SURF_SETTINGS, -3);
+    check_int("the wheel scrolls the listing", U.ag_top, 3);
+    ui_wheel(&U, SURF_SETTINGS, -100);
+    check_int("down to the last page", U.ag_top, 40 - AG_ROWS_VISIBLE);
+    ui_wheel(&U, SURF_SETTINGS, 100);
+    check_int("and back to the top", U.ag_top, 0);
+    U.ag_in = true;
+    for (int i = 0; i < 12; i++) key(KEY_DOWN);
+    check_true("the pad scrolls to keep the selection visible", U.ag_sel == 12 && U.ag_top == 12 - AG_ROWS_VISIBLE + 1);
+    UiViews *vw = malloc(sizeof *vw);
+    ui_make_views(&U, vw);
+    check_int("the view carries the whole listing", vw->ag.nrows, 40);
+    check_true("with the folder glyph", !strcmp(vw->ag_rows[0].glyph, "folder"));
+    check_str("the path the user reads", vw->ag_path, "SD card 2");
+    free(vw);
+}
+
 static void t_dock_pointer_under_the_menu(void)
 {
     fresh(true);
@@ -1210,6 +1413,8 @@ int main(void)
     t_menu_pins_and_pointer();
     t_menu_scroll();
     t_quick_settings();
+    t_addgame();
+    t_addgame_pointer();
     t_quick_pointer();
     t_settings();
     t_settings_pointer();

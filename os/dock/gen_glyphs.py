@@ -15,11 +15,12 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import mockup
 
-APPS = ('apps', 'browser', 'terminal', 'settings', 'game', 'images', 'monitor', 'about')
+APPS = ('apps', 'browser', 'terminal', 'settings', 'game', 'images', 'monitor', 'about', 'folder')
 # (glyph, sizes, levels): the sizes it is drawn at in mockup.py
 WANT = [(a, (18, 22, 44), (0,)) for a in APPS] + [
     ('pin', (14, 18), (0,)), ('wifi', (18, 20), (0, 1, 2, 3)), ('volume', (18, 20), (0, 1, 2)), ('battery', (18, 20), (0,)),
     ('brightness', (18,), (0,)), ('bluetooth', (18,), (0,)), ('ssh', (18,), (0,)), ('usb', (18,), (0,)),
+    ('exe', (18,), (0,)), ('sdcard', (18,), (0,)), ('disk', (18,), (0,)),
     ('left', (18, 22), (0,)), ('right', (18, 22), (0,)), ('up', (22,), (0,)), ('down', (22,), (0,)), ('close', (18,), (0,)),
 ]
 

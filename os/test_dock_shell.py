@@ -5,7 +5,7 @@ and the pixels (grim screenshots compared with the renderer's own output for the
 A test window (os/dock/test_client.c) stands in for an application and logs the keys it is given. The pad daemon is a small fake socket server; the tools the shell runs (wpctl, nmcli ...) are
 scripts that log what they were asked. Needs: qemu-user (/usr/bin/qemu-aarch64-static), the built SYSTEM tree of the work directory (rootfs/tree), the host's libwayland, libxkbcommon and the
 Liberation fonts. Skipped, with the reason, when one is missing. Nothing is installed and nothing outside the work directory and ~/.cache is written."""
-import json, os, shutil, signal, socket, subprocess, tempfile, threading, time, unittest
+import json, os, shutil, signal, socket, subprocess, tempfile, threading, time, unittest, sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -172,9 +172,10 @@ class Rig:
                  'nmcli': 'echo "*:TestNet:80"', 'bluetoothctl': 'echo "No default controller available"',
                  'wisp-ssh': 'case "$1" in on|off) echo "$@" >> "%(d)s/ssh.log";; esac; echo "ssh: off"', 'wisp-usb': 'case "$1" in off|computer|host) echo "$@" >> "%(d)s/usb.log";; esac; echo "usb: off"',
                  'wisp-screen': 'case "$1" in timeout) case "$2" in status) echo 120;; *) echo "$2" >> "%(d)s/screen-timeout.log";; esac;; esac',
+                 'wisp-shortcut': 'exec env WISP_STEAM_ROOT="%(d)s/steamroot" WISP_SHORTCUT_NO_STEAM_CHECK=1 python3 -I "%(sc)s" "$@"',
                  'wisp-session-select': 'echo "$@" >> "%(d)s/session.log"', 'wisp-download-action': 'echo "$@" >> "%(d)s/download-action.log"'}
         for n, body in tools.items():
-            p = self.tools / n; p.write_text('#!/bin/sh\n' + body % {'d': self.d} + '\n'); p.chmod(0o755)
+            p = self.tools / n; p.write_text('#!/bin/sh\n' + body % {'d': self.d, 'sc': HERE / 'rootfs/usr/bin/wisp-shortcut'} + '\n'); p.chmod(0o755)
         (self.sysfs / 'class/backlight/bl').mkdir(parents=True)
         (self.sysfs / 'class/backlight/bl/max_brightness').write_text('100\n'); (self.sysfs / 'class/backlight/bl/brightness').write_text('60\n')
         (self.sysfs / 'class/power_supply/bat').mkdir(parents=True)
@@ -628,6 +629,38 @@ class ShellTests(unittest.TestCase):
         self.rig.wait(lambda: self.rig.state()['settings'] == '0' and self.rig.state()['panels'] == 'wisp-dock:720x44', 20, 'the window to close and its surface to go')
         self.rig.wait(lambda: c.lines().count('enter') == 2, 20, 'the terminal to get the keyboard back')
 
+    def test_add_game_lists_a_card_adds_the_shortcut_through_wisp_shortcut_and_offers_game_mode(self):
+        card, internal = self.rig.d / 'card', self.rig.d / 'internal'
+        shutil.rmtree(card, True); shutil.rmtree(internal, True); shutil.rmtree(self.rig.d / 'steamroot', True)
+        (card / 'games/wow/Data').mkdir(parents=True); (card / 'games/wow/WoW.exe').write_bytes(b'MZ' * 2048); (card / 'games/wow/readme.txt').write_text('x'); (card / 'games/wow/.hidden').write_text('x')
+        (self.rig.d / 'steamroot/userdata/4242/config').mkdir(parents=True)
+        self.rig.start_dock(extra={'WISP_AG_CARD': str(card), 'WISP_AG_INTERNAL': str(internal)})
+        self.rig.ctl('addgame')
+        self.rig.wait(lambda: self.rig.state()['settings'] == '1', 20, 'the Add game window')
+        self.rig.wait(lambda: 'wisp-settings:720x436' in self.rig.state()['panels'], 20, 'its surface above the strip')
+        self.assertTrue(internal.is_dir(), 'the internal place is made when it is missing')
+        time.sleep(1.0)                                                # the listing of the card arrives
+        shot = self.rig.grim()
+        self.assertGreater(int((shot[10:34, 20:150].astype(int).sum(-1) > 500).sum()), 100, 'the title "Add game" is on the screen')
+        for k in ('right', 'enter', 'enter'): self.rig.tap(k); time.sleep(0.6)       # into the listing, open games, open wow
+        for k in ('down', 'enter'): self.rig.tap(k); time.sleep(0.6)                 # Data is first (the way up is not selected), then WoW.exe: the confirmation
+        time.sleep(0.6)
+        shot = self.rig.grim()
+        self.assertGreater(int((shot[70:100, 190:300].astype(int).sum(-1) > 300).sum()), 50, 'the confirmation shows the name')
+        self.assertFalse((self.rig.d / 'steamroot/userdata/4242/config/shortcuts.vdf').exists(), 'asking is not adding')
+        self.rig.tap('enter')                                          # Add to Steam
+        vdf = self.rig.d / 'steamroot/userdata/4242/config/shortcuts.vdf'
+        self.rig.wait(lambda: vdf.exists(), 20, 'the shortcut file to be written by wisp-shortcut')
+        out = subprocess.run([sys.executable, '-I', str(HERE / 'rootfs/usr/bin/wisp-shortcut'), 'list', '--file', str(vdf)], capture_output=True, text=True).stdout
+        self.assertIn('\tWoW\t"%s"' % (card / 'games/wow/WoW.exe'), out)
+        time.sleep(1.0)
+        shot = self.rig.grim()
+        self.assertGreater(int((shot[170:200, 180:340].astype(int).sum(-1) > 400).sum()), 80, 'the added dialog is on the screen')
+        log = self.rig.d / 'session.log'
+        self.assertFalse(log.exists() and log.read_text().strip(), 'Game mode is not entered before the person asks')
+        self.rig.tap('enter')                                          # Game mode
+        self.rig.wait(lambda: log.exists() and log.read_text().split() == ['game'], 20, 'the session switch')
+        self.rig.wait(lambda: self.rig.state()['settings'] == '0' and self.rig.state()['panels'] == 'wisp-dock:720x44', 20, 'the window to close')
 
 if __name__ == '__main__':
     unittest.main()

@@ -117,7 +117,7 @@ void dl_offer(DlKind kind, const char *name, DlOffer *o)
         break;
     case DL_WINDOWS:
         snprintf(o->title, sizeof o->title, "Windows program downloaded");
-        snprintf(o->text, sizeof o->text, "Add it to Steam in Game mode (Add a Non-Steam Game).");
+        snprintf(o->text, sizeof o->text, "Open Add game in the menu to add it to Steam.");
         break;
     case DL_IMAGE:
         snprintf(o->title, sizeof o->title, "Picture downloaded");

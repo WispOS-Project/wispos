@@ -147,6 +147,22 @@ int main(int argc, char **argv)
         static const Hint hints[] = { { "A", "Change" }, { "B", "Back" }, { "L2/R2", "Page" } };
         SettingsView sv = { pages, 5, 0, rows, 2, 0, true, hints, 3 };
         view_settings(&v, &sv);
+    } else if (!strcmp(scene, "add-game-places") || !strcmp(scene, "add-game-pick") || !strcmp(scene, "add-game-confirm") || !strcmp(scene, "add-game-done")) {
+        dock_build(&d, &f, argv[3], true);
+        draw_dock(&v, &d, -1, false);
+        static const AgPlace places[] = { { "SD card 2", "116.9 GB free", "sdcard" }, { "Internal", "38.7 GB free", "disk" } };
+        static const AgRow rows[] = { { "..", "up one folder", "left" }, { "Data", "folder", "folder" }, { "Interface", "folder", "folder" },
+                                      { "Launcher.exe", "1.2 MB", "exe" }, { "Repair.exe", "0.7 MB", "exe" }, { "WoW.exe", "4.6 MB", "exe" } };
+        static const Hint pick_hints[] = { { "A", "Open" }, { "B", "Up" } }, confirm_hints[] = { { "A", "Choose" }, { "B", "Back" } };
+        AgView av = { 0, places, 2, 0, true, "SD card 2  /  games  /  wow-1.12.1", rows, 6, 5, 0, "", "", 0, pick_hints, 2 };
+        if (!strcmp(scene, "add-game-places")) { static const Hint places_hints[] = { { "A", "Open" }, { "B", "Close" } }; av.in_content = false; av.hints = places_hints; }
+        else if (strcmp(scene, "add-game-pick")) {
+            av.phase = !strcmp(scene, "add-game-confirm") ? 1 : 2;
+            av.c_name = "WoW"; av.c_exe = "/storage/wispos/tf2/games/wow-1.12.1/WoW.exe"; av.c_opt = 1;
+            av.hints = confirm_hints;
+            if (av.phase == 2) { static const Hint done_hints[] = { { "A", "Game mode" }, { "B", "Stay here" } }; av.hints = done_hints; av.nhints = 0; }
+        }
+        view_addgame(&v, &av);
     } else if (!strcmp(scene, "osk") || !strcmp(scene, "osk-symbols")) {
         OskView o = { OSK_LOWER, false, false, 2, 4 };
         if (!strcmp(scene, "osk-symbols")) o = (OskView){ OSK_SYMBOLS, false, false, 3, 6 };

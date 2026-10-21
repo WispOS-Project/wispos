@@ -258,12 +258,32 @@ def g_close(d, u):
     _round_line(d, u, [(6, 6), (18, 18)], 2.2); _round_line(d, u, [(18, 6), (6, 18)], 2.2)
 
 
+def g_folder(d, u):
+    _rr(d, (2.4 * u, 6.2 * u, 21.6 * u, 19.6 * u), 2 * u, outline=255, width=int(1.9 * u))
+    d.polygon([(2.4 * u, 6.4 * u), (2.4 * u, 4.4 * u), (9 * u, 4.4 * u), (11.2 * u, 6.4 * u)], fill=255)
+
+
+def g_exe(d, u):
+    _rr(d, (2.6 * u, 3.8 * u, 21.4 * u, 20.2 * u), 2 * u, outline=255, width=int(1.9 * u))
+    d.polygon([(9.6 * u, 8 * u), (9.6 * u, 16 * u), (16.6 * u, 12 * u)], fill=255)
+
+
+def g_sdcard(d, u):
+    d.polygon([(5.4 * u, 2.6 * u), (14.4 * u, 2.6 * u), (18.6 * u, 6.8 * u), (18.6 * u, 21.4 * u), (5.4 * u, 21.4 * u)], outline=255, width=int(1.9 * u))
+    for x in (8.6, 11.4, 14.2): _round_line(d, u, [(x, 5.2), (x, 8.6)], 1.7)
+
+
+def g_disk(d, u):
+    _rr(d, (2.8 * u, 7 * u, 21.2 * u, 17.6 * u), 2 * u, outline=255, width=int(1.9 * u))
+    d.ellipse((16.6 * u, 11.6 * u, 18.8 * u, 13.8 * u), fill=255)
+
+
 GLYPHS = {'apps': g_apps, 'browser': g_browser, 'terminal': g_terminal, 'settings': g_settings, 'game': g_game, 'images': g_images, 'monitor': g_monitor, 'about': g_about,
-          'wifi': g_wifi, 'down': g_down, 'up': g_up, 'volume': g_volume, 'battery': g_battery, 'brightness': g_brightness, 'bluetooth': g_bluetooth, 'usb': g_usb, 'ssh': g_ssh, 'pin': g_pin, 'close': g_close, 'left': g_left, 'right': g_right}
+          'wifi': g_wifi, 'down': g_down, 'up': g_up, 'volume': g_volume, 'battery': g_battery, 'brightness': g_brightness, 'bluetooth': g_bluetooth, 'usb': g_usb, 'ssh': g_ssh, 'pin': g_pin, 'folder': g_folder, 'exe': g_exe, 'sdcard': g_sdcard, 'disk': g_disk, 'close': g_close, 'left': g_left, 'right': g_right}
 
 # the application list of the mockups: name, glyph, glyph colour (palette only)
 APPS = {'browser': ('Browser', ACCENT), 'terminal': ('Terminal', OK), 'settings': ('Settings', GLYPH), 'game': ('Game mode', ACCENT),
-        'images': ('Images', GLYPH), 'monitor': ('Monitor', GLYPH), 'about': ('About', GLYPH)}
+        'images': ('Images', GLYPH), 'monitor': ('Monitor', GLYPH), 'about': ('About', GLYPH), 'folder': ('Add game', GLYPH)}
 
 
 # ---------------------------------------------------------------------------------------------------------------------------- the pieces
@@ -571,6 +591,73 @@ def screen_quick_submenu(f, wall):
     return c
 
 
+def add_game_window(c, side, side_sel, body, hints, side_focus=True):
+    """The Add game window: places at the left (D-pad up/down), the listing or the form at the right; drawn like the Settings window."""
+    f = c.f
+    c.img.paste(BG, (0, 0, W, DOCK_TOP))
+    c.text((20, 22), 'Add game', f.title, TEXT, 'lm'); c.hline(0, W, 44, LINE)
+    sx = 176; y = 56
+    for glyph, name, sub in side:
+        on = name == side_sel and side_focus; here = name == side_sel
+        c.rrect((10, y, sx - 8, y + 46), RADIUS, FOCUS if on else (PANEL if here else None))
+        c.icon(glyph, 32, y + 23, 18, FOCUS_FG if on else GLYPH); c.text((54, y + 15), name, f.small, FOCUS_FG if on else TEXT, 'lm'); c.text((54, y + 33), sub, f.tiny, FOCUS_DIM if on else DIM, 'lm'); y += 50
+    c.vline(sx, 52, DOCK_TOP - 10, LINE)
+    body(c, sx + 18, W - 18)
+    hx = sx + 18
+    for key_, label in hints: hx = c.key_pill(hx, DOCK_TOP - 32, key_, label)
+
+
+PLACES = [('sdcard', 'SD card 2', '116.9 GB free'), ('disk', 'Internal', '38.7 GB free')]
+
+
+def screen_add_game_pick(f, wall, in_listing=True):
+    c = desktop_base(f, wall); draw_dock(c, PINS, running=['terminal', 'images'], active='terminal')
+    def body(c, x0, x1):
+        c.text((x0, 66), 'SD card 2  /  games  /  wow-1.12.1', c.f.tiny, DIM, 'lm')
+        rows = [('left', '..', 'up one folder', False), ('folder', 'Data', 'folder', False), ('folder', 'Interface', 'folder', False), ('exe', 'Launcher.exe', '1.2 MB', False), ('exe', 'Repair.exe', '0.7 MB', False), ('exe', 'WoW.exe', '4.6 MB', True)]
+        y = 82
+        for glyph, name, note, sel in rows:
+            sel = sel and in_listing
+            c.rrect((x0, y, x1, y + 38), RADIUS, FOCUS if sel else PANEL)
+            c.icon(glyph, x0 + 24, y + 19, 18, FOCUS_FG if sel else (ACCENT if glyph == 'exe' else GLYPH))
+            c.text((x0 + 50, y + 19), name, f.small, FOCUS_FG if sel else TEXT, 'lm'); c.text((x1 - 14, y + 19), note, f.tiny, FOCUS_DIM if sel else DIM, 'rm'); y += 42
+    f = c.f
+    add_game_window(c, PLACES, 'SD card 2', body, (('A', 'Open'), ('B', 'Close') if not in_listing else ('B', 'Up')), side_focus=not in_listing)
+    return c
+
+
+def screen_add_game_places(f, wall): return screen_add_game_pick(f, wall, in_listing=False)
+
+
+def screen_add_game_confirm(f, wall, hints=(('A', 'Choose'), ('B', 'Back'))):
+    c = desktop_base(f, wall); draw_dock(c, PINS, running=['terminal', 'images'], active='terminal')
+    def body(c, x0, x1):
+        f = c.f
+        c.text((x0, 66), 'Add to Steam', f.small_bold, TEXT, 'lm')
+        fields = [('Name', 'WoW'), ('Program', '/storage/wispos/tf2/games/wow-1.12.1/WoW.exe')]
+        for i, (label, value) in enumerate(fields):
+            y = 84 + 56 * i
+            c.rrect((x0, y, x1, y + 50), RADIUS, PANEL)
+            c.text((x0 + 14, y + 15), label, f.tiny, DIM, 'lm'); c.text((x0 + 14, y + 34), value, f.small, TEXT, 'lm')
+        bw = 150; by = 260
+        c.rrect((x1 - 2 * bw - 10, by, x1 - bw - 10, by + 34), RADIUS, LINE); c.text((x1 - bw - 10 - bw / 2, by + 17), 'Cancel', f.small, TEXT, 'mm')
+        c.rrect((x1 - bw, by, x1, by + 34), RADIUS, FOCUS); c.text((x1 - bw / 2, by + 17), 'Add to Steam', f.small, FOCUS_FG, 'mm')
+    add_game_window(c, PLACES, 'SD card 2', body, hints, side_focus=False)
+    return c
+
+
+def screen_add_game_done(f, wall):
+    c = screen_add_game_confirm(f, wall, hints=())                 # a modal dialog: the window's own hints are not shown under it
+    c.img.alpha_composite(Image.new('RGBA', (W, DOCK_TOP), BG[:3] + (150,)), dest=(0, 0))               # the dialog's overlay covers the window, not the dock
+    pw, ph = 400, 116; x0 = (W - pw) // 2; y0 = (DOCK_TOP - ph) // 2
+    c.rrect((x0, y0, x0 + pw, y0 + ph), RADIUS, BG[:3] + (252,), LINE)
+    c.text((x0 + 20, y0 + 28), 'Added to Steam', f.small_bold, TEXT, 'lm')
+    c.text((x0 + 20, y0 + 52), 'WoW is in the library in Game mode.', f.tiny, DIM, 'lm')
+    hx = x0 + 20
+    for key_, label in (('A', 'Game mode'), ('B', 'Stay here')): hx = c.key_pill(hx, y0 + ph - 38, key_, label)
+    return c
+
+
 SETTINGS_PAGES = [('Display', 'brightness'), ('Date & time', 'monitor'), ('Power', 'battery'), ('Connections', 'wifi'), ('About', 'about')]
 
 
@@ -621,7 +708,7 @@ def screen_settings_datetime(f, wall):
     settings_window(c, 'Date & time', content); return c
 
 
-SCREENS = {'desktop-empty': screen_empty, 'desktop-window': screen_window, 'dock-focus': screen_focus, 'dock-more': screen_more, 'apps-menu': screen_menu, 'quick-settings': screen_quick, 'quick-settings-submenu': screen_quick_submenu, 'osk': screen_osk, 'osk-symbols': screen_osk_symbols,
+SCREENS = {'desktop-empty': screen_empty, 'desktop-window': screen_window, 'dock-focus': screen_focus, 'dock-more': screen_more, 'apps-menu': screen_menu, 'add-game-places': screen_add_game_places, 'add-game-pick': screen_add_game_pick, 'add-game-confirm': screen_add_game_confirm, 'add-game-done': screen_add_game_done, 'quick-settings': screen_quick, 'quick-settings-submenu': screen_quick_submenu, 'osk': screen_osk, 'osk-symbols': screen_osk_symbols,
            'settings-display': screen_settings_display, 'settings-datetime': screen_settings_datetime}
 
 

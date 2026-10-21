@@ -21,6 +21,8 @@
 #define UI_ACTIONS 8
 #define UI_SET_PAGES 8                  /* room for the pages of the Settings window */
 #define UI_SET_ROWS 6
+#define UI_AG_ENTRIES 160               /* the Add game window's listing */
+#define UI_AG_PLACES 4
 
 typedef enum {
     EFF_LAUNCH,             /* a = index into the application list */
@@ -41,6 +43,8 @@ typedef enum {
     EFF_REFRESH,            /* the quick settings opened: read the system values again */
     EFF_BROWSER_ACTIONS,    /* Select in the browser layer: the list of browser actions */
     EFF_DOWNLOAD,           /* a = the action of the toast that was accepted (DlAction), s = the file: carried out by wisp-download-action */
+    EFF_AG_LIST,            /* Add game: list the folder u->ag_dir and answer with ui_ag_entries */
+    EFF_AG_ADD,             /* Add game: add u->ag_name / u->ag_exe to Steam (wisp-shortcut) and answer with ui_ag_added */
 } UiEffKind;
 
 typedef struct { UiEffKind kind; int a, b, c; float f; char s[WD_ID]; } UiEffect;
@@ -77,6 +81,9 @@ typedef struct {
     int toast_w, toast_h;
 } UiGeom;
 
+typedef struct { char name[WD_NAME]; bool dir; unsigned kb; } UiAgEntry;     /* what the shell reads from a folder: ui_ag_entries filters, sorts and adds the way up */
+typedef struct { char name[24], sub[32], path[WD_PATH]; } UiAgPlace;
+
 typedef struct Ui Ui;
 typedef IconSpec (*UiIconFn)(void *ctx, const WdApp *app, const char *kind_key);        /* kind_key: "apps", "game" or an application's ID */
 
@@ -104,9 +111,21 @@ struct Ui {
     int qs_page;                    /* 0 the list of rows, 1 the USB port submenu (the panel keeps its size, its content changes) */
     bool dragging;                  /* a slider is being dragged with the pointer */
 
-    bool settings;                  /* the Settings window is open */
+    bool settings;                  /* the Settings window (or the Add game window, see `win`) is open: one overlay surface above the strip */
+    int win;                        /* 0 Settings, 1 Add game */
     bool set_in;                    /* the pad is in the page's rows, not in the list of pages */
     int set_page, set_row, set_opt;
+
+    /* the Add game window */
+    UiAgPlace ag_places[UI_AG_PLACES];
+    int ag_nplaces, ag_place;
+    bool ag_in;                     /* the pad is in the listing, not in the list of places */
+    int ag_phase;                   /* 0 listing, 1 confirmation, 2 added */
+    char ag_dir[WD_PATH];           /* the folder listed (or being listed) */
+    UiAgEntry ag_e[UI_AG_ENTRIES];
+    int ag_n, ag_sel, ag_top;
+    char ag_name[WD_NAME], ag_exe[WD_PATH];
+    int ag_opt;                     /* confirmation: 0 Cancel, 1 Add to Steam */
 
     bool menu;
     int mlist[WD_MAX_APPS], mn, msel, mtop;
@@ -142,6 +161,12 @@ void ui_toast(Ui *u, const char *title, const char *text, int ttl_ms);
 /* A toast that offers one thing: A (Enter) or a click accepts it (an EFF_DOWNLOAD effect with `action` and `arg`), B (Escape) or a right click dismisses it. It holds the keyboard until then. */
 void ui_toast_action(Ui *u, const char *title, const char *text, const char *label, int action, const char *arg, int ttl_ms);
 
+/* Add game: the shell registers the places before the window opens (ui_pad "addgame"), answers EFF_AG_LIST with the folder's raw entries and EFF_AG_ADD with the result. */
+void ui_ag_clear_places(Ui *u);
+void ui_ag_add_place(Ui *u, const char *name, const char *sub, const char *path);
+void ui_ag_entries(Ui *u, const char *dir, const UiAgEntry *e, int n);
+void ui_ag_added(Ui *u, bool ok, const char *why);
+
 UiGeom ui_geometry(const Ui *u);
 unsigned ui_take_dirty(Ui *u);
 int  ui_take_effects(Ui *u, UiEffect *out, int cap);
@@ -168,6 +193,12 @@ typedef struct {
     char set_note[UI_SET_ROWS][64];
     Hint set_hints[3];
     SettingsView settings;
+    AgPlace ag_places[UI_AG_PLACES];
+    AgRow ag_rows[UI_AG_ENTRIES];
+    char ag_note[UI_AG_ENTRIES][16];
+    char ag_path[WD_PATH + 64];
+    Hint ag_hints[3];
+    AgView ag;
     OskView osk;
     Hint toast_hints[2];
     ToastView toast;

@@ -1115,6 +1115,64 @@ class CheckRootfsTests(unittest.TestCase):
         self.assertEqual(m.main([str(cfg2), str(root / 'empty-steam')]), 0)
         self.assertNotIn('"10"\n', cfg2.read_text())
 
+    def test_wisp_shortcut_adds_a_non_steam_game_to_steams_own_file_and_leaves_everything_else_alone(self):
+        # Issue #46: Steam's gamepad UI has no "Add a Non-Steam Game" and desktop mode does not run Steam, so the entry is written into userdata/<id>/config/shortcuts.vdf while Steam is stopped.
+        import importlib.machinery, importlib.util, os, struct, subprocess, sys, tempfile, zlib
+        path = str(HERE / 'rootfs/usr/bin/wisp-shortcut')
+        spec = importlib.util.spec_from_loader('wisp_shortcut', importlib.machinery.SourceFileLoader('wisp_shortcut', path))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        # the format by hand: a map named shortcuts holding map "0", whose fields are typed 0x01 string / 0x02 int, each map ended by 0x08, and the root ended by 0x08
+        hand = (b'\x00shortcuts\x00' + b'\x000\x00' + b'\x02appid\x00' + struct.pack('<I', 0x80000001) + b'\x01AppName\x00Old Game\x00' + b'\x01Exe\x00"/x/old.exe"\x00' +
+                b'\x01LaunchOptions\x00-w\x00' + b'\x00tags\x00' + b'\x010\x00fav\x00' + b'\x08' + b'\x08' + b'\x08' + b'\x08')
+        self.assertEqual(m.parse(hand), [('shortcuts', [('0', [('appid', 0x80000001), ('AppName', 'Old Game'), ('Exe', '"/x/old.exe"'), ('LaunchOptions', '-w'), ('tags', [('0', 'fav')])])])])
+        self.assertEqual(m.serialize(m.parse(hand)), hand)                                    # reading and writing is lossless for what Steam writes
+        for bad in (b'\x00shortcuts\x00', b'\x05x\x00', b'\x02n\x00\x01', b'\x01a\x00b', hand + b'\x01junk\x00x\x00'):
+            with self.assertRaises(m.VdfError): m.parse(bad)                                  # anything else is refused, never guessed at
+        exe, name = '/storage/wispos/tf2/games/g/Game.exe', 'Some Game'
+        q = '"%s"' % exe
+        self.assertEqual(m.appid(q, name), (zlib.crc32((q + name).encode()) & 0xffffffff) | 0x80000000)
+        self.assertTrue(m.appid(q, name) & 0x80000000)
+        d = Path(tempfile.mkdtemp(prefix='wispos-sc-', dir=os.environ.get('TMPDIR')))
+        f = d / 'shortcuts.vdf'
+        env = dict(os.environ, WISP_SHORTCUT_NO_STEAM_CHECK='1')
+        def run(*args): return subprocess.run([sys.executable, '-I', path, *args], capture_output=True, text=True, env=env)
+        r = run('add', '--name', name, '--exe', exe, '--options', 'A=1 %command%', '--file', str(f))
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertIn('added "Some Game"', r.stdout)
+        root = m.parse(f.read_bytes()); sc = dict(m.shortcuts_of(root)); e = sc['0']
+        self.assertEqual(m.get(e, 'Exe'), q); self.assertEqual(m.get(e, 'StartDir'), '"/storage/wispos/tf2/games/g"', 'the start directory defaults to the exe\'s')
+        self.assertEqual(m.get(e, 'LaunchOptions'), 'A=1 %command%'); self.assertEqual(m.get(e, 'appid'), m.appid(q, name))
+        self.assertFalse(os.path.exists(str(f) + '.wisp-bak'), 'a file that did not exist needs no backup')
+        before = f.read_bytes()
+        r = run('add', '--name', name, '--exe', exe, '--options', 'A=1 %command%', '--file', str(f))
+        self.assertIn('present', r.stdout); self.assertEqual(f.read_bytes(), before)           # the same again changes nothing
+        r = run('add', '--name', name, '--exe', exe, '--options', 'B=2 %command%', '--file', str(f))
+        self.assertIn('updated', r.stdout); self.assertEqual(m.get(dict(m.shortcuts_of(m.parse(f.read_bytes())))['0'], 'LaunchOptions'), 'B=2 %command%')
+        (d / 'shortcuts.vdf.wisp-bak').unlink(missing_ok=True)                                 # (the update above made a backup of the first version: start this part afresh)
+        f.write_bytes(hand)                                                                    # another game Steam already knows: kept, ours gets the next number
+        r = run('add', '--name', name, '--exe', exe, '--file', str(f))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sc = dict(m.shortcuts_of(m.parse(f.read_bytes())))
+        self.assertEqual(sorted(sc), ['0', '1']); self.assertEqual(m.get(sc['0'], 'AppName'), 'Old Game'); self.assertEqual(m.get(sc['0'], 'tags'), [('0', 'fav')])
+        self.assertEqual((d / 'shortcuts.vdf.wisp-bak').read_bytes(), hand)                    # one backup of what was there
+        r = run('add', '--name', 'Third', '--exe', '/x/t.exe', '--file', str(f))
+        self.assertEqual((d / 'shortcuts.vdf.wisp-bak').read_bytes(), hand, 'the backup is never overwritten')
+        r = run('list', '--file', str(f)); self.assertIn('Old Game', r.stdout); self.assertIn(name, r.stdout); self.assertIn('Third', r.stdout)
+        r = run('remove', '--name', 'Third', '--file', str(f)); self.assertIn('removed 1 entry', r.stdout)
+        self.assertEqual(sorted(dict(m.shortcuts_of(m.parse(f.read_bytes())))), ['0', '1'])
+        f.write_bytes(b'\x00shortcuts\x00\x00')                                              # a file this tool does not understand is left alone
+        junk = f.read_bytes(); r = run('add', '--name', 'x', '--exe', '/x', '--file', str(f))
+        self.assertEqual((r.returncode, f.read_bytes()), (1, junk)); self.assertIn('left alone', r.stderr)
+        r = subprocess.run([sys.executable, '-I', path, 'add', '--name', 'x', '--exe', '/x', '--file', str(f)], capture_output=True, text=True, env=dict(os.environ, WISP_SHORTCUT_NO_STEAM_CHECK='0'))
+        self.assertIn(r.returncode, (1, 4))
+        r = run('add', '--exe', '/x'); self.assertEqual(r.returncode, 3)                       # a missing name is a usage error
+        # without --file the one Steam user's file is used; none or several is an error, never a guess
+        root_ = d / 'steam'; (root_ / 'userdata' / '111' / 'config').mkdir(parents=True)
+        e2 = dict(env, WISP_STEAM_ROOT=str(root_))
+        r = subprocess.run([sys.executable, '-I', path, 'add', '--name', 'n', '--exe', '/x/n.exe'], capture_output=True, text=True, env=e2)
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertTrue((root_ / 'userdata' / '111' / 'config' / 'shortcuts.vdf').exists())
+        (root_ / 'userdata' / '222' / 'config').mkdir(parents=True)
+        r = subprocess.run([sys.executable, '-I', path, 'list'], capture_output=True, text=True, env=e2); self.assertEqual(r.returncode, 2)
+
     def test_games_launched_by_steam_get_the_fallback_ahead_of_the_overlay_in_every_process(self):
         # 2026-10-09: Steam-launched games never started on the handheld. Steam preloads "<fallback>:<overlay>:~/.steam/bin32/gameoverlayrenderer.so:<overlay>" into the
         # launch shell and the pressure-vessel container; libraries initialise in reverse order, so the overlay's constructors (LSE atomics, SIGILL on the Cortex-A53)
