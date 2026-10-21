@@ -12,7 +12,8 @@ Prepare a candidate on a branch and record the exact revision and artifact hashe
 
 ## Candidate verification
 
-1. Set version/build identity in the manifest and add the changelog entry.
+1. Set version/build identity in the manifest. Run `tools/changelog.py highest` to see which SemVer bump the pending fragments call for, then
+   `tools/changelog.py release X.Y.Z YYYY-MM-DD` to assemble them into `CHANGELOG.md` and remove the fragments.
 2. Run `os/build-all.sh WORKDIR` with an HDD-backed work directory. With the local
    dev inputs documented in [CONTRIBUTING.md](../CONTRIBUTING.md), the same invocation
    also builds the development variant. Do not edit a separate copy of product code.
