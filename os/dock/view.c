@@ -350,11 +350,103 @@ void view_quick(const Vctx *v, const QsView *q)
     for (int i = 0; i < q->nhints; i++) hx = view_key_pill(v, hx, y1 - foot + 4, q->hints[i].key, q->hints[i].label, PANEL);
 }
 
-/* ------------------------------------------------------------------ the settings panel */
+/* ------------------------------------------------------------------ the window chrome shared by Settings and Add game */
 #define SET_SIDE 176                                      /* the category list's right edge */
 #define SET_ROW_Y(i) (80 + 90 * (i))                      /* a row's title line */
 #define SET_X0 (SET_SIDE + 18)
 #define SET_X1 (WISP_UI_W - 18)
+
+/* ------------------------------------------------------------------ the Add game window */
+#define AG_ROW_Y(i) (82 + 42 * (i))
+#define AG_BTN_W 150
+#define AG_BTN_Y 260
+#define AG_DONE_W 400
+#define AG_DONE_H 116
+
+static int ag_btn_x(int b) { return b == 0 ? SET_X1 - 2 * AG_BTN_W - 10 : SET_X1 - AG_BTN_W; }
+
+void view_addgame(const Vctx *v, const AgView *a)
+{
+    rd_rrect(v->c, X(v, 0), Y(v, 0), X(v, WISP_UI_W), Y(v, DOCK_TOP), 0, BG);
+    rd_text(v->c, v->f->title, IX(v, 20), IY(v, 22), "Add game", TEXT, RD_LEFT, RD_MIDDLE);
+    rd_hline(v->c, X(v, 0), X(v, WISP_UI_W), Y(v, 44), 1.f, LINE);
+    for (int i = 0; i < a->nplaces; i++) {
+        int y = 56 + 50 * i;
+        bool here = i == a->place, on = here && !a->in_content;
+        if (here) rd_rrect(v->c, X(v, 10), Y(v, y), X(v, SET_SIDE - 8), Y(v, y + 46), WISP_UI_RADIUS, on ? FOCUS : PANEL);
+        view_glyph(v, a->places[i].glyph, 0, 18, 32.f, (float)(y + 23), on ? FOCUS_FG : GLYPHC);
+        rd_text_fit(v->c, v->f->small, IX(v, 54), IY(v, y + 15), SET_SIDE - 8 - 54 - 4, a->places[i].name, on ? FOCUS_FG : TEXT, RD_LEFT, RD_MIDDLE);
+        rd_text_fit(v->c, v->f->tiny, IX(v, 54), IY(v, y + 33), SET_SIDE - 8 - 54 - 4, a->places[i].sub, on ? FOCUS_DIM : DIM, RD_LEFT, RD_MIDDLE);
+    }
+    rd_vline(v->c, X(v, SET_SIDE), Y(v, 52), Y(v, DOCK_TOP - 10), 1.f, LINE);
+    if (a->phase == 0) {
+        rd_text_fit(v->c, v->f->tiny, IX(v, SET_X0), IY(v, 66), SET_X1 - SET_X0, a->path, DIM, RD_LEFT, RD_MIDDLE);
+        for (int k = 0; k < AG_ROWS_VISIBLE && a->top + k < a->nrows; k++) {
+            int i = a->top + k, y = AG_ROW_Y(k);
+            const AgRow *r = &a->rows[i];
+            bool sel = a->in_content && i == a->sel, exe = strcmp(r->glyph, "exe") == 0;
+            rd_rrect(v->c, X(v, SET_X0), Y(v, y), X(v, SET_X1), Y(v, y + 38), WISP_UI_RADIUS, sel ? FOCUS : PANEL);
+            view_glyph(v, r->glyph, 0, 18, (float)(SET_X0 + 24), (float)(y + 19), sel ? FOCUS_FG : exe ? ACCENT : GLYPHC);
+            rd_text_fit(v->c, v->f->small, IX(v, SET_X0 + 50), IY(v, y + 19), SET_X1 - SET_X0 - 50 - 110, r->name, sel ? FOCUS_FG : TEXT, RD_LEFT, RD_MIDDLE);
+            if (r->note) rd_text(v->c, v->f->tiny, IX(v, SET_X1 - 14), IY(v, y + 19), r->note, sel ? FOCUS_DIM : DIM, RD_RIGHT, RD_MIDDLE);
+        }
+        if (a->nrows == 0) rd_text(v->c, v->f->small, IX(v, SET_X0), IY(v, 100), "Nothing to show here.", DIM, RD_LEFT, RD_MIDDLE);
+    } else {
+        rd_text(v->c, v->f->small_bold, IX(v, SET_X0), IY(v, 66), "Add to Steam", TEXT, RD_LEFT, RD_MIDDLE);
+        const char *label[2] = { "Name", "Program" }, *value[2] = { a->c_name, a->c_exe };
+        for (int i = 0; i < 2; i++) {
+            int y = 84 + 56 * i;
+            rd_rrect(v->c, X(v, SET_X0), Y(v, y), X(v, SET_X1), Y(v, y + 50), WISP_UI_RADIUS, PANEL);
+            rd_text(v->c, v->f->tiny, IX(v, SET_X0 + 14), IY(v, y + 15), label[i], DIM, RD_LEFT, RD_MIDDLE);
+            rd_text_fit(v->c, v->f->small, IX(v, SET_X0 + 14), IY(v, y + 34), SET_X1 - SET_X0 - 28, value[i], TEXT, RD_LEFT, RD_MIDDLE);
+        }
+        for (int b = 0; b < 2; b++) {
+            bool on = a->c_opt == b;
+            rd_rrect(v->c, X(v, ag_btn_x(b)), Y(v, AG_BTN_Y), X(v, ag_btn_x(b) + AG_BTN_W), Y(v, AG_BTN_Y + 34), WISP_UI_RADIUS, on ? FOCUS : LINE);
+            rd_text(v->c, v->f->small, IX(v, ag_btn_x(b) + AG_BTN_W / 2), IY(v, AG_BTN_Y + 17), b == 0 ? "Cancel" : "Add to Steam", on ? FOCUS_FG : TEXT, RD_CENTER, RD_MIDDLE);
+        }
+    }
+    int hx = SET_X0;
+    for (int i = 0; i < a->nhints; i++) hx = view_key_pill(v, hx, DOCK_TOP - 32, a->hints[i].key, a->hints[i].label, PANEL);
+    if (a->phase == 2) {
+        int x0 = (WISP_UI_W - AG_DONE_W) / 2, y0 = (DOCK_TOP - AG_DONE_H) / 2;
+        rd_rrect(v->c, X(v, 0), Y(v, 0), X(v, WISP_UI_W), Y(v, DOCK_TOP), 0, RD_RGBA(WISP_UI_BG, 150));
+        rd_rrect(v->c, X(v, x0), Y(v, y0), X(v, x0 + AG_DONE_W), Y(v, y0 + AG_DONE_H), WISP_UI_RADIUS, RD_RGBA(WISP_UI_BG, 252));
+        rd_rrect_ring(v->c, X(v, x0), Y(v, y0), X(v, x0 + AG_DONE_W), Y(v, y0 + AG_DONE_H), WISP_UI_RADIUS, 1.f, LINE);
+        rd_text(v->c, v->f->small_bold, IX(v, x0 + 20), IY(v, y0 + 28), "Added to Steam", TEXT, RD_LEFT, RD_MIDDLE);
+        char line[160]; snprintf(line, sizeof line, "%s is in the library in Game mode.", a->c_name);
+        rd_text_fit(v->c, v->f->tiny, IX(v, x0 + 20), IY(v, y0 + 52), AG_DONE_W - 40, line, DIM, RD_LEFT, RD_MIDDLE);
+        int hx2 = x0 + 20;
+        for (int i = 0; i < 2; i++) hx2 = view_key_pill(v, hx2, y0 + AG_DONE_H - 38, i == 0 ? "A" : "B", i == 0 ? "Game mode" : "Stay here", PANEL);
+    }
+}
+
+AgHit view_addgame_hit(const AgView *a, int px, int py)
+{
+    AgHit none = { -1, -1, -1 };
+    if (py < 0 || py >= DOCK_TOP) return none;
+    if (a->phase == 2) {                                                /* the dialog is modal: only its two choices answer */
+        int x0 = (WISP_UI_W - AG_DONE_W) / 2, y0 = (DOCK_TOP - AG_DONE_H) / 2;
+        if (py >= y0 + AG_DONE_H - 38 && py < y0 + AG_DONE_H - 14 && px >= x0 && px < x0 + AG_DONE_W) return (AgHit){ -1, -1, px < x0 + AG_DONE_W / 2 ? 1 : 0 };
+        return none;
+    }
+    for (int i = 0; i < a->nplaces; i++) {
+        int y = 56 + 50 * i;
+        if (px >= 10 && px < SET_SIDE - 8 && py >= y && py < y + 46) return (AgHit){ i, -1, -1 };
+    }
+    if (a->phase == 0) {
+        for (int k = 0; k < AG_ROWS_VISIBLE && a->top + k < a->nrows; k++) {
+            int y = AG_ROW_Y(k);
+            if (px >= SET_X0 && px < SET_X1 && py >= y && py < y + 38) return (AgHit){ -1, a->top + k, -1 };
+        }
+    } else {
+        for (int b = 0; b < 2; b++)
+            if (px >= ag_btn_x(b) && px < ag_btn_x(b) + AG_BTN_W && py >= AG_BTN_Y && py < AG_BTN_Y + 34) return (AgHit){ -1, -1, b };
+    }
+    return none;
+}
+
+/* ------------------------------------------------------------------ the settings panel */
 
 int view_settings_height(void) { return DOCK_TOP; }
 

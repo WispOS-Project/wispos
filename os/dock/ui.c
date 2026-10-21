@@ -424,6 +424,7 @@ static void settings_open(Ui *u)
     if (u->osk) osk_set(u, false);
     if (u->dock != UI_IDLE) dock_close(u);
     u->settings = true;
+    u->win = 0;
     u->set_page = 0;
     u->set_in = false;
     u->set_row = u->set_opt = 0;
@@ -435,6 +436,8 @@ static void settings_close(Ui *u)
 {
     if (!u->settings) return;
     u->settings = false;
+    u->win = 0;
+    u->ag_phase = 0;
     u->set_in = false;
     dirty(u, DIRTY_SETTINGS | DIRTY_DOCK);
 }
@@ -513,6 +516,240 @@ static void pointer_settings(Ui *u, int x, int y, UiPtr ev, int button)
     else if (h.row >= 0 && set_applies(u->set_page, h.row)) { u->set_in = true; u->set_row = h.row; u->set_opt = h.opt; set_apply(u); }
 }
 
+/* ------------------------------------------------------------------ the Add game window (issue #46)
+ * Places at the left (the cards), a folder listing at the right: A opens a folder or picks a program (.exe), B goes up and then out. A pick asks once (Cancel / Add to Steam); adding hands the
+ * name and program to the shell (EFF_AG_ADD: wisp-shortcut, which needs Steam stopped, as it is in desktop mode) and the window then says where the game is and offers Game mode. */
+void ui_ag_clear_places(Ui *u) { u->ag_nplaces = 0; }
+
+void ui_ag_add_place(Ui *u, const char *name, const char *sub, const char *path)
+{
+    if (u->ag_nplaces >= UI_AG_PLACES) return;
+    UiAgPlace *p = &u->ag_places[u->ag_nplaces++];
+    snprintf(p->name, sizeof p->name, "%s", name);
+    snprintf(p->sub, sizeof p->sub, "%s", sub);
+    snprintf(p->path, sizeof p->path, "%s", path);
+    size_t n = strlen(p->path);
+    while (n > 1 && p->path[n - 1] == '/') p->path[--n] = 0;
+}
+
+static bool ag_at_root(const Ui *u) { return u->ag_nplaces == 0 || !strcmp(u->ag_dir, u->ag_places[u->ag_place].path); }
+
+static void ag_list(Ui *u, const char *dir)
+{
+    snprintf(u->ag_dir, sizeof u->ag_dir, "%s", dir);
+    u->ag_n = 0;
+    u->ag_sel = u->ag_top = 0;
+    eff(u, EFF_AG_LIST, 0, 0, 0, 0, NULL);
+    dirty(u, DIRTY_SETTINGS);
+}
+
+static int ag_cmp(const void *pa, const void *pb)
+{
+    const UiAgEntry *a = pa, *b = pb;
+    if (a->dir != b->dir) return a->dir ? -1 : 1;
+    return strcasecmp(a->name, b->name);
+}
+
+static bool ag_is_exe(const char *name)
+{
+    size_t n = strlen(name);
+    return n > 4 && !strcasecmp(name + n - 4, ".exe");
+}
+
+void ui_ag_entries(Ui *u, const char *dir, const UiAgEntry *e, int n)
+{
+    if (!u->settings || u->win != 1 || strcmp(dir, u->ag_dir)) return;       /* an answer for a folder that is no longer the one shown */
+    UiAgEntry tmp[UI_AG_ENTRIES];
+    int m = 0;
+    for (int i = 0; i < n && m < UI_AG_ENTRIES - 1; i++) {
+        if (e[i].name[0] == '.' || e[i].name[0] == 0) continue;               /* hidden files and the dot entries are not games */
+        if (!e[i].dir && !ag_is_exe(e[i].name)) continue;
+        tmp[m++] = e[i];
+    }
+    qsort(tmp, (size_t)m, sizeof tmp[0], ag_cmp);
+    u->ag_n = 0;
+    if (!ag_at_root(u)) { memset(&u->ag_e[0], 0, sizeof u->ag_e[0]); snprintf(u->ag_e[0].name, sizeof u->ag_e[0].name, ".."); u->ag_e[0].dir = true; u->ag_n = 1; }
+    for (int i = 0; i < m && u->ag_n < UI_AG_ENTRIES; i++) u->ag_e[u->ag_n++] = tmp[i];
+    u->ag_sel = u->ag_n > 1 && u->ag_e[0].name[0] == '.' ? 1 : 0;            /* on the first real entry, not on "up one folder" */
+    u->ag_top = 0;
+    dirty(u, DIRTY_SETTINGS);
+}
+
+static void ag_open(Ui *u)
+{
+    if (u->ag_nplaces == 0) { ui_toast(u, "No storage found", "Insert a card with games on it.", 3000); return; }
+    menu_close(u);
+    if (u->osk) osk_set(u, false);
+    if (u->dock != UI_IDLE) dock_close(u);
+    u->settings = true;
+    u->win = 1;
+    u->ag_place = 0;
+    u->ag_in = false;
+    u->ag_phase = 0;
+    ag_list(u, u->ag_places[0].path);
+    dirty(u, DIRTY_SETTINGS | DIRTY_DOCK);
+}
+
+static void ag_up(Ui *u)
+{
+    char d[WD_PATH];
+    snprintf(d, sizeof d, "%s", u->ag_dir);
+    char *s = strrchr(d, '/');
+    if (s && s != d) *s = 0;
+    ag_list(u, d);
+}
+
+static void ag_scroll(Ui *u)
+{
+    if (u->ag_sel < u->ag_top) u->ag_top = u->ag_sel;
+    if (u->ag_sel >= u->ag_top + AG_ROWS_VISIBLE) u->ag_top = u->ag_sel - AG_ROWS_VISIBLE + 1;
+}
+
+static bool ag_join(char *dst, size_t cap, const char *dir, const char *name)       /* false when it would not fit: a cut path would name another file */
+{
+    int n = snprintf(dst, cap, "%s/%s", dir, name);
+    return n > 0 && (size_t)n < cap;
+}
+
+static void ag_pick(Ui *u, int i)                                                 /* A on a row: open a folder, go up, or choose a program */
+{
+    if (i < 0 || i >= u->ag_n) return;
+    const UiAgEntry *e = &u->ag_e[i];
+    if (!strcmp(e->name, "..")) { ag_up(u); return; }
+    char path[WD_PATH];
+    if (!ag_join(path, sizeof path, u->ag_dir, e->name)) { ui_toast(u, "That path is too long", "Move the game closer to the top of the card.", 4000); return; }
+    if (e->dir) { ag_list(u, path); return; }
+    snprintf(u->ag_exe, sizeof u->ag_exe, "%s", path);
+    snprintf(u->ag_name, sizeof u->ag_name, "%s", e->name);
+    char *dot = strrchr(u->ag_name, '.');                                         /* the name defaults to the file's name without .exe: the library shows it */
+    if (dot) *dot = 0;
+    u->ag_phase = 1;
+    u->ag_opt = 1;
+    dirty(u, DIRTY_SETTINGS);
+}
+
+static void ag_place_set(Ui *u, int p)
+{
+    p = clampi(p, 0, u->ag_nplaces - 1);
+    if (p == u->ag_place && !u->ag_in) return;
+    u->ag_place = p;
+    u->ag_in = false;
+    ag_list(u, u->ag_places[p].path);
+}
+
+static void ag_confirm(Ui *u, int opt)                                            /* the confirmation's two buttons */
+{
+    if (opt == 1) { eff(u, EFF_AG_ADD, 0, 0, 0, 0, NULL); return; }
+    u->ag_phase = 0;
+    dirty(u, DIRTY_SETTINGS);
+}
+
+void ui_ag_added(Ui *u, bool ok, const char *why)
+{
+    if (!u->settings || u->win != 1) return;
+    if (ok) { u->ag_phase = 2; dirty(u, DIRTY_SETTINGS); return; }
+    u->ag_phase = 0;
+    dirty(u, DIRTY_SETTINGS);
+    ui_toast(u, "Could not add the game", why && why[0] ? why : "Steam did not accept it.", 4000);
+}
+
+static void ag_done(Ui *u, int opt)                                               /* the "added" dialog: Game mode, or stay here */
+{
+    if (opt == 1) { eff(u, EFF_GAME_MODE, 0, 0, 0, 0, NULL); settings_close(u); return; }
+    u->ag_phase = 0;
+    dirty(u, DIRTY_SETTINGS);
+}
+
+static void ag_key(Ui *u, int code, unsigned mods)
+{
+    if (u->ag_phase == 2) {
+        if (code == KEY_ENTER || code == KEY_KPENTER) ag_done(u, 1);
+        else if (code == KEY_ESC) ag_done(u, 0);
+        return;
+    }
+    if (u->ag_phase == 1) {
+        switch (code) {
+        case KEY_LEFT: u->ag_opt = 0; dirty(u, DIRTY_SETTINGS); break;
+        case KEY_RIGHT: u->ag_opt = 1; dirty(u, DIRTY_SETTINGS); break;
+        case KEY_TAB: u->ag_opt = (mods & UI_SHIFT) ? 0 : 1; dirty(u, DIRTY_SETTINGS); break;
+        case KEY_ENTER: case KEY_KPENTER: ag_confirm(u, u->ag_opt); break;
+        case KEY_ESC: ag_confirm(u, 0); break;
+        default: break;
+        }
+        return;
+    }
+    switch (code) {
+    case KEY_ESC:
+        if (u->ag_in && !ag_at_root(u)) ag_up(u);
+        else if (u->ag_in) { u->ag_in = false; dirty(u, DIRTY_SETTINGS); }
+        else settings_close(u);
+        break;
+    case KEY_UP: case KEY_DOWN: {
+        int d = code == KEY_UP ? -1 : 1;
+        if (u->ag_in) { u->ag_sel = clampi(u->ag_sel + d, 0, u->ag_n > 0 ? u->ag_n - 1 : 0); ag_scroll(u); dirty(u, DIRTY_SETTINGS); }
+        else ag_place_set(u, u->ag_place + d);
+        break;
+    }
+    case KEY_LEFT:
+        if (u->ag_in && !ag_at_root(u)) ag_up(u);
+        else if (u->ag_in) { u->ag_in = false; dirty(u, DIRTY_SETTINGS); }
+        break;
+    case KEY_RIGHT:
+        if (!u->ag_in && u->ag_n > 0) { u->ag_in = true; dirty(u, DIRTY_SETTINGS); }
+        break;
+    case KEY_ENTER: case KEY_KPENTER:
+        if (u->ag_in) ag_pick(u, u->ag_sel);
+        else if (u->ag_n > 0) { u->ag_in = true; dirty(u, DIRTY_SETTINGS); }
+        break;
+    default: break;
+    }
+}
+
+static void ag_build(const Ui *u, AgPlace places[UI_AG_PLACES], AgRow rows[UI_AG_ENTRIES], char note[UI_AG_ENTRIES][16], char *path, size_t pathcap, Hint hints[3], AgView *out)
+{
+    for (int i = 0; i < u->ag_nplaces; i++) {
+        const UiAgPlace *p = &u->ag_places[i];
+        places[i] = (AgPlace){ p->name, p->sub, i == 0 ? "sdcard" : "disk" };
+    }
+    for (int i = 0; i < u->ag_n; i++) {
+        const UiAgEntry *e = &u->ag_e[i];
+        bool up = !strcmp(e->name, "..");
+        note[i][0] = 0;
+        if (up) snprintf(note[i], 16, "up one folder");
+        else if (e->dir) snprintf(note[i], 16, "folder");
+        else if (e->kb >= 1024) snprintf(note[i], 16, "%.1f MB", (double)e->kb / 1024.0);
+        else snprintf(note[i], 16, "%u KB", e->kb);
+        rows[i] = (AgRow){ e->name, note[i], up ? "left" : e->dir ? "folder" : "exe" };
+    }
+    const char *root = u->ag_nplaces ? u->ag_places[u->ag_place].path : "";
+    size_t rl = strlen(root);
+    snprintf(path, pathcap, "%s", u->ag_nplaces ? u->ag_places[u->ag_place].name : "");
+    if (!strncmp(u->ag_dir, root, rl) && u->ag_dir[rl] == '/') {
+        for (const char *s = u->ag_dir + rl; *s; ) {                              /* "SD card 2  /  games  /  wow-1.12.1" */
+            const char *e = strchr(s + 1, '/');
+            size_t k = e ? (size_t)(e - s - 1) : strlen(s + 1), at = strlen(path);
+            if (at + k + 6 >= pathcap) break;
+            snprintf(path + at, pathcap - at, "  /  %.*s", (int)k, s + 1);
+            s = e ? e : s + strlen(s);
+        }
+    }
+    if (u->ag_phase == 0) { hints[0] = (Hint){ "A", "Open" }; hints[1] = (Hint){ "B", "Up" }; *out = (AgView){ 0, places, u->ag_nplaces, u->ag_place, u->ag_in, path, rows, u->ag_n, u->ag_sel, u->ag_top, "", "", 0, hints, 2 }; }
+    else if (u->ag_phase == 1) { hints[0] = (Hint){ "A", "Choose" }; hints[1] = (Hint){ "B", "Back" }; *out = (AgView){ 1, places, u->ag_nplaces, u->ag_place, true, path, rows, u->ag_n, u->ag_sel, u->ag_top, u->ag_name, u->ag_exe, u->ag_opt, hints, 2 }; }
+    else { hints[0] = (Hint){ "A", "Game mode" }; hints[1] = (Hint){ "B", "Stay here" }; *out = (AgView){ 2, places, u->ag_nplaces, u->ag_place, true, path, rows, u->ag_n, u->ag_sel, u->ag_top, u->ag_name, u->ag_exe, u->ag_opt, hints, 0 }; }
+}
+
+static void pointer_addgame(Ui *u, int x, int y, UiPtr ev, int button)
+{
+    if (ev != PTR_DOWN || button != BTN_LEFT) return;
+    AgPlace places[UI_AG_PLACES]; AgRow rows[UI_AG_ENTRIES]; char note[UI_AG_ENTRIES][16]; char path[WD_PATH + 64]; Hint hints[3]; AgView av;
+    ag_build(u, places, rows, note, path, sizeof path, hints, &av);
+    AgHit h = view_addgame_hit(&av, x, y);
+    if (u->ag_phase == 2) { if (h.button >= 0) ag_done(u, h.button); return; }
+    if (h.place >= 0) { if (u->ag_phase == 1) u->ag_phase = 0; ag_place_set(u, h.place); return; }
+    if (u->ag_phase == 1) { if (h.button >= 0) { u->ag_opt = h.button; ag_confirm(u, h.button); } return; }
+    if (h.row >= 0) { u->ag_in = true; u->ag_sel = h.row; ag_scroll(u); ag_pick(u, h.row); }
+}
+
 /* ------------------------------------------------------------------ the on-screen keyboard */
 static void osk_clamp(Ui *u)
 {
@@ -584,8 +821,10 @@ void ui_pad(Ui *u, const char *cmd)
 {
     if (u->toast.on && u->toast.modal && (!strcmp(cmd, "summon") || !strcmp(cmd, "menu") || !strcmp(cmd, "qs") || !strcmp(cmd, "osk"))) toast_end(u, false);       /* asking for something else puts an offer away */
     if (u->settings && (!strcmp(cmd, "summon") || !strcmp(cmd, "menu") || !strcmp(cmd, "qs") || !strcmp(cmd, "osk"))) settings_close(u);       /* asking for the strip, the menu, the quick settings or the keyboard leaves the window */
-    if (!strcmp(cmd, "settings")) {
-        if (u->settings) settings_close(u); else settings_open(u);
+    if (!strcmp(cmd, "addgame")) {
+        if (u->settings && u->win == 1) settings_close(u); else ag_open(u);                  /* the same command closes its own window and replaces the other */
+    } else if (!strcmp(cmd, "settings")) {
+        if (u->settings && u->win == 0) settings_close(u); else settings_open(u);
     } else if (!strcmp(cmd, "summon")) {
         if (u->dock == UI_SUMMONED || u->dock == UI_ACTIONS_OPEN || u->dock == UI_QS) dock_close(u);
         else dock_summon(u, true);
@@ -648,7 +887,7 @@ void ui_key(Ui *u, int code, const char *utf8, unsigned mods)
         else if (code == KEY_ESC) toast_end(u, false);
         return;
     }
-    if (u->settings) { settings_key(u, code, mods); return; }
+    if (u->settings) { if (u->win == 1) ag_key(u, code, mods); else settings_key(u, code, mods); return; }
     if (u->menu) { menu_key(u, code, utf8, mods); return; }
     if (u->dock != UI_IDLE) { dock_key(u, code, mods); return; }
     /* no panel is open: the shell only has the keyboard for shortcuts */
@@ -764,7 +1003,7 @@ void ui_pointer(Ui *u, UiSurf s, int x, int y, UiPtr ev, int button)
         if (ev == PTR_DOWN && u->toast.on && u->toast.modal) toast_end(u, button == BTN_LEFT);
         return;
     }
-    if (s == SURF_SETTINGS) { if (u->settings) pointer_settings(u, x, y, ev, button); return; }
+    if (s == SURF_SETTINGS) { if (u->settings) { if (u->win == 1) pointer_addgame(u, x, y, ev, button); else pointer_settings(u, x, y, ev, button); } return; }
     if (s == SURF_DOCK && u->settings && ev == PTR_DOWN) settings_close(u);                    /* a press on the strip leaves the window and then acts */
     if (s == SURF_DOCK) { if (!u->menu && !u->osk) pointer_dock(u, x, y, ev, button); }      /* the dock is covered by the menu and hidden by the keyboard */
     else if (s == SURF_MENU) { if (u->menu) pointer_menu(u, x, y, ev, button); }
@@ -773,6 +1012,12 @@ void ui_pointer(Ui *u, UiSurf s, int x, int y, UiPtr ev, int button)
 
 void ui_wheel(Ui *u, UiSurf s, int steps)
 {
+    if (s == SURF_SETTINGS && u->settings && u->win == 1 && u->ag_phase == 0) {                  /* the listing scrolls under the wheel */
+        int max_top = u->ag_n > AG_ROWS_VISIBLE ? u->ag_n - AG_ROWS_VISIBLE : 0;
+        u->ag_top = clampi(u->ag_top - steps, 0, max_top);
+        dirty(u, DIRTY_SETTINGS);
+        return;
+    }
     if (s == SURF_DOCK && (u->menu || u->osk)) return;
     if (s == SURF_MENU && u->menu) {
         int rows = (u->mn + WISP_UI_MENU_COLS - 1) / WISP_UI_MENU_COLS, vis = view_menu_rows_visible(), max_top = rows > vis ? rows - vis : 0;
@@ -984,6 +1229,7 @@ void ui_make_views(const Ui *u, UiViews *vw)
     vw->menu = (MenuView){ vw->menu_e, u->mn, u->msel, u->mtop, "Applications", "Pick an app. X pins it to the dock.", vw->menu_hints, 4, u->query[0] ? u->query : NULL };
     qs_build(u, vw->qs_rows, vw->qs_text, vw->qs_hints, &vw->qs);
     set_build(u, vw->set_pages, vw->set_rows, vw->set_note, vw->set_hints, &vw->settings);
+    ag_build(u, vw->ag_places, vw->ag_rows, vw->ag_note, vw->ag_path, sizeof vw->ag_path, vw->ag_hints, &vw->ag);
     vw->osk = (OskView){ u->page, u->shift, u->ctrl, u->orow, u->ocol };
     vw->toast_hints[0] = (Hint){ "A", u->toast.label };
     vw->toast_hints[1] = (Hint){ "B", "Dismiss" };
@@ -1000,6 +1246,6 @@ void ui_draw_dock(const Ui *u, const Vctx *v, const UiViews *vw)
 
 void ui_draw_settings(const Ui *u, const Vctx *v, const UiViews *vw)
 {
-    (void)u;
-    view_settings(v, &vw->settings);
+    if (u->win == 1) view_addgame(v, &vw->ag);
+    else view_settings(v, &vw->settings);
 }

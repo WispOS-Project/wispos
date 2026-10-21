@@ -103,6 +103,22 @@ typedef struct { int page, row, opt; } SetHit;           /* page >= 0: a categor
  * A shell that places it elsewhere must subtract that origin first. */
 SetHit view_settings_hit(const SettingsView *s, int px, int py);
 
+/* The Add game window (issue #46): places at the left, then a folder listing, a confirmation or an "added" dialog at the right. Same chrome as the Settings window. */
+typedef struct { const char *name, *sub, *glyph; } AgPlace;
+typedef struct { const char *name, *note, *glyph; } AgRow;            /* glyph: "left" (up one folder), "folder" or "exe" */
+typedef struct {
+    int phase;                                                          /* 0 listing, 1 confirmation, 2 added */
+    const AgPlace *places; int nplaces, place; bool in_content;
+    const char *path;                                                   /* the folder shown, as the user reads it */
+    const AgRow *rows; int nrows, sel, top;
+    const char *c_name, *c_exe; int c_opt;                              /* confirmation: the name, the program and the focused button (0 Cancel, 1 Add) */
+    const Hint *hints; int nhints;
+} AgView;
+#define AG_ROWS_VISIBLE 7
+void view_addgame(const Vctx *v, const AgView *a);
+typedef struct { int place, row, button; } AgHit;                        /* place / row (index into the whole listing) / button (0 Cancel or Stay, 1 Add or Game mode); -1 for none */
+AgHit view_addgame_hit(const AgView *a, int px, int py);
+
 /* ------------------------------------------------------------------ the on-screen keyboard */
 typedef enum { OSK_LOWER, OSK_UPPER, OSK_SYMBOLS } OskPage;
 typedef struct { OskPage page; bool shift, ctrl; int row, col; } OskView;       /* the focus is a (row, column); row 4 is the specials */

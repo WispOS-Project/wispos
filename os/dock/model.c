@@ -502,7 +502,7 @@ char wd_tile_letter(const char *name) {
 }
 
 const char *wd_glyph_name(const char *icon) {
-    static const char *const known[] = { "apps", "browser", "terminal", "settings", "game", "images", "monitor", "about" };
+    static const char *const known[] = { "apps", "browser", "terminal", "settings", "game", "images", "monitor", "about", "folder" };
     if (!icon || strncmp(icon, "wisp-", 5)) return NULL;
     for (size_t i = 0; i < sizeof known / sizeof *known; i++) if (!strcmp(icon + 5, known[i])) return known[i];
     return NULL;

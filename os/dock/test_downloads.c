@@ -117,7 +117,7 @@ static void t_offer(void)
     dl_offer(DL_ARCHIVE, "Doom.zip", &o);
     check_int("archive: extract", o.action, DL_ACT_EXTRACT); check_str("label", o.label, "Extract"); check_true("names it", strstr(o.text, "Doom") && strstr(o.text, "/storage/games"));
     dl_offer(DL_WINDOWS, "setup.exe", &o);
-    check_int("windows: information only", o.action, DL_ACT_NONE); check_true("and where to go", strstr(o.text, "Non-Steam") != NULL);
+    check_int("windows: information only", o.action, DL_ACT_NONE); check_true("and where to go", strstr(o.text, "Add game") != NULL);
     dl_offer(DL_IMAGE, "cat.png", &o);
     check_int("picture: open", o.action, DL_ACT_OPEN); check_str("label", o.label, "Open"); check_str("title", o.title, "Picture downloaded");
     dl_offer(DL_OTHER, "/x/notes.txt", &o);

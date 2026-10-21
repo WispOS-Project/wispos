@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Add game
+Exec=wisp-dock --ctl addgame
+Icon=wisp-folder
+Categories=Game;

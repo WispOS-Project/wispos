@@ -6,7 +6,7 @@
  * input and sockets into calls to those and carries out the effects they ask for. It is a single thread around one poll() loop and uses no CPU while nothing happens.
  *
  *   wisp-dock                 run (started by the desktop session, wisp-desktop.service)
- *   wisp-dock --ctl CMD       send a command to the running one: summon menu qs settings osk actions state quit, and toast TITLE|TEXT|SECONDS (the sway key bindings and the programs it starts use
+ *   wisp-dock --ctl CMD       send a command to the running one: summon menu qs settings addgame osk actions state quit, and toast TITLE|TEXT|SECONDS (the sway key bindings and the programs it starts use
  *                             it; `state` prints one line)
  *
  * Environment (all optional; the defaults are the image's paths): WISP_DOCK_APPS (colon-separated directories of desktop files, highest priority first), WISP_DOCK_PINS, WISP_DOCK_FONTS,
@@ -22,7 +22,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <dirent.h>
 #include <sys/socket.h>
+#include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/inotify.h>
@@ -744,6 +746,9 @@ static void launch_app(int idx)
     spawn(argv);
 }
 
+static void ag_list_dir(void);
+static void ag_add_game(void);
+
 static void run_effects(void)
 {
     UiEffect e[UI_EFFECTS];
@@ -775,10 +780,95 @@ static void run_effects(void)
             case EFF_WIFI: ui_toast(&S.ui, "Wi-Fi networks", "Choose one in Game mode: Settings, Internet.", 5000); break;
             case EFF_REFRESH: refresh_fast(); refresh_slow(); break;
             case EFF_BROWSER_ACTIONS: ui_toast(&S.ui, "Browser actions", "Not available yet.", 2500); break;
+            case EFF_AG_LIST: ag_list_dir(); break;
+            case EFF_AG_ADD: ag_add_game(); break;
             case EFF_DOWNLOAD: spawn_cmd("wisp-download-action", f->a == DL_ACT_INSTALL ? "install" : f->a == DL_ACT_EXTRACT ? "extract" : f->a == DL_ACT_OPEN ? "open" : "none", f->s); break;
             }
         }
     }
+}
+
+/* ------------------------------------------------------------------ Add game (issue #46): the places, a folder's entries and the call to wisp-shortcut */
+#ifndef AG_CARD
+#define AG_CARD "/storage/wispos/tf2"                   /* the second card, a Steam library folder */
+#endif
+#ifndef AG_INTERNAL
+#define AG_INTERNAL "/storage/games"                    /* on the boot card, where the downloads feature extracts archives; made when the window opens */
+#endif
+
+static void ag_free_text(const char *path, char *out, size_t cap)
+{
+    struct statvfs sv;
+    if (statvfs(path, &sv) != 0) { snprintf(out, cap, "not available"); return; }
+    snprintf(out, cap, "%.1f GB free", (double)sv.f_bavail * (double)sv.f_frsize / 1e9);
+}
+
+static void ag_register_places(void)
+{
+    ui_ag_clear_places(&S.ui);
+    struct stat st;
+    char sub[32];
+    const char *e, *card = (e = getenv("WISP_AG_CARD")) && *e ? e : AG_CARD, *internal = (e = getenv("WISP_AG_INTERNAL")) && *e ? e : AG_INTERNAL;      /* the tests use their own folders */
+    if (stat(card, &st) == 0 && S_ISDIR(st.st_mode)) { ag_free_text(card, sub, sizeof sub); ui_ag_add_place(&S.ui, "SD card 2", sub, card); }
+    if (stat(internal, &st) != 0) (void)mkdir(internal, 0755);
+    if (stat(internal, &st) == 0 && S_ISDIR(st.st_mode)) { ag_free_text(internal, sub, sizeof sub); ui_ag_add_place(&S.ui, "Internal", sub, internal); }
+}
+
+static void ag_list_dir(void)
+{
+    const char *dir = S.ui.ag_dir;
+    DIR *d = opendir(dir);
+    int cap = 256, n = 0;
+    UiAgEntry *e = calloc((size_t)cap, sizeof *e);
+    if (!e) return;
+    struct dirent *de;
+    while (d && (de = readdir(d))) {
+        if (n == cap) { UiAgEntry *g = realloc(e, (size_t)cap * 2 * sizeof *e); if (!g) break; e = g; memset(e + cap, 0, (size_t)cap * sizeof *e); cap *= 2; }
+        struct stat st;
+        if (fstatat(dirfd(d), de->d_name, &st, 0) != 0) continue;              /* a broken link is not a game */
+        UiAgEntry *x = &e[n];
+        if (strlen(de->d_name) >= sizeof x->name) continue;                        /* a name that does not fit would be cut, and a cut name is another file: not offered */
+        memcpy(x->name, de->d_name, strlen(de->d_name) + 1);
+        x->dir = S_ISDIR(st.st_mode);
+        x->kb = (unsigned)((st.st_size + 1023) / 1024);
+        if (x->dir || S_ISREG(st.st_mode)) n++;
+    }
+    if (d) closedir(d); else note("cannot read %s: %s", dir, strerror(errno));
+    ui_ag_entries(&S.ui, dir, e, n);
+    free(e);
+}
+
+/* wisp-shortcut with the name and the program as separate arguments (no shell sees them); its last line of complaint comes back as the reason */
+static void ag_add_game(void)
+{
+    char path[300];
+    tool_path(path, sizeof path, "wisp-shortcut");
+    int pfd[2];
+    if (pipe(pfd) != 0) { ui_ag_added(&S.ui, false, strerror(errno)); return; }
+    pid_t p = fork();
+    if (p < 0) { close(pfd[0]); close(pfd[1]); ui_ag_added(&S.ui, false, strerror(errno)); return; }
+    if (p == 0) {
+        dup2(pfd[1], 2); dup2(pfd[1], 1); close(pfd[0]); close(pfd[1]);
+        char *argv[] = { path, "add", "--name", S.ui.ag_name, "--exe", S.ui.ag_exe, NULL };
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    close(pfd[1]);
+    char out[256] = "";
+    size_t o = 0;
+    ssize_t r;
+    while ((r = read(pfd[0], out + o, sizeof out - 1 - o)) > 0) { o += (size_t)r; if (o >= sizeof out - 1) break; }
+    out[o] = 0;
+    close(pfd[0]);
+    int st = 0;
+    waitpid(p, &st, 0);
+    bool ok = WIFEXITED(st) && WEXITSTATUS(st) == 0;
+    char *nl = strrchr(out, '\n');
+    if (nl && nl[1] == 0) { *nl = 0; nl = strrchr(out, '\n'); }
+    const char *why = nl ? nl + 1 : out;
+    if (!ok && WIFEXITED(st) && WEXITSTATUS(st) == 127) why = "wisp-shortcut is not installed.";
+    if (!ok) note("wisp-shortcut failed: %s", why);
+    ui_ag_added(&S.ui, ok, why);
 }
 
 /* ------------------------------------------------------------------ control socket and the pad's */
@@ -829,6 +919,7 @@ static void ctl_line(int fd, char *line)
     }
     else if (!strncmp(line, "key ", 4)) { int code = atoi(line + 4); if (code > 0) ui_key(&S.ui, code, "", 0); }
     else if (!strncmp(line, "text ", 5)) { for (const char *p = line + 5; *p; p++) { int c; bool sh; if (ui_char_key(*p, &c, &sh)) { char t[2] = { *p, 0 }; ui_key(&S.ui, c, t, sh ? UI_SHIFT : 0); } } }
+    else if (!strcmp(line, "addgame")) { ag_register_places(); ui_pad(&S.ui, line); }
     else if (!strcmp(line, "summon") || !strcmp(line, "menu") || !strcmp(line, "qs") || !strcmp(line, "settings") || !strcmp(line, "osk") || !strcmp(line, "actions") || !strncmp(line, "nav-", 4) || !strncmp(line, "osk-", 4))
         ui_pad(&S.ui, line);
     else note("unknown command: %.40s", line);

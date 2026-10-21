@@ -152,7 +152,7 @@ class DesktopEntryTests(unittest.TestCase):
 
     def test_there_is_the_whole_set_and_each_entry_is_complete(self):
         e = self.entries()
-        self.assertEqual(set(e), {'wisp-%s.desktop' % n for n in ('browser', 'terminal', 'settings', 'images', 'monitor', 'about', 'game')})
+        self.assertEqual(set(e), {'wisp-%s.desktop' % n for n in ('browser', 'terminal', 'settings', 'images', 'monitor', 'about', 'game', 'folder')})
         for name, d in e.items():
             self.assertEqual(d['Type'], 'Application', name); self.assertTrue(d['Name'] and d['Exec'], name)
             self.assertNotIn('NoDisplay', d, name)
@@ -188,7 +188,7 @@ class DesktopEntryTests(unittest.TestCase):
             prog = d['Exec'].split()[0]
             self.assertTrue(prog in ours or (tree / prog).exists() or (ROOT / 'usr/bin' / prog).exists(), '%s runs %s' % (name, prog))
             for word in d['Exec'].split()[1:]:
-                if not word.startswith('-') and word not in ('--ctl', 'qs', 'settings', 'game'): self.assertTrue(word in ours or (tree / word).exists() or (ROOT / 'usr/bin' / word).exists(), '%s runs %s' % (name, word))
+                if not word.startswith('-') and word not in ('--ctl', 'qs', 'settings', 'addgame', 'game'): self.assertTrue(word in ours or (tree / word).exists() or (ROOT / 'usr/bin' / word).exists(), '%s runs %s' % (name, word))
 
 
 class MimeDatabaseTests(unittest.TestCase):
