@@ -733,7 +733,7 @@ static void ag_build(const Ui *u, AgPlace places[UI_AG_PLACES], AgRow rows[UI_AG
             s = e ? e : s + strlen(s);
         }
     }
-    if (u->ag_phase == 0) { hints[0] = (Hint){ "A", "Open" }; hints[1] = (Hint){ "B", "Up" }; *out = (AgView){ 0, places, u->ag_nplaces, u->ag_place, u->ag_in, path, rows, u->ag_n, u->ag_sel, u->ag_top, "", "", 0, hints, 2 }; }
+    if (u->ag_phase == 0) { hints[0] = (Hint){ "A", "Open" }; hints[1] = (Hint){ "B", u->ag_in ? "Up" : "Close" }; *out = (AgView){ 0, places, u->ag_nplaces, u->ag_place, u->ag_in, path, rows, u->ag_n, u->ag_sel, u->ag_top, "", "", 0, hints, 2 }; }
     else if (u->ag_phase == 1) { hints[0] = (Hint){ "A", "Choose" }; hints[1] = (Hint){ "B", "Back" }; *out = (AgView){ 1, places, u->ag_nplaces, u->ag_place, true, path, rows, u->ag_n, u->ag_sel, u->ag_top, u->ag_name, u->ag_exe, u->ag_opt, hints, 2 }; }
     else { hints[0] = (Hint){ "A", "Game mode" }; hints[1] = (Hint){ "B", "Stay here" }; *out = (AgView){ 2, places, u->ag_nplaces, u->ag_place, true, path, rows, u->ag_n, u->ag_sel, u->ag_top, u->ag_name, u->ag_exe, u->ag_opt, hints, 0 }; }
 }

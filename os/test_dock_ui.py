@@ -77,6 +77,7 @@ MUTANTS = [
     ('the wheel does not scroll the listing', 'u->ag_top = clampi(u->ag_top - steps, 0, max_top);\n        dirty(u, DIRTY_SETTINGS);\n        return;', 'return;'),
     ('the selection can leave the visible rows', '    if (u->ag_sel >= u->ag_top + AG_ROWS_VISIBLE) u->ag_top = u->ag_sel - AG_ROWS_VISIBLE + 1;', ''),
     ('addgame replaces nothing: the command only toggles', 'if (u->settings && u->win == 1) settings_close(u); else ag_open(u);', 'if (u->settings) settings_close(u); else ag_open(u);'),
+    ("the places' B hint says Up", 'hints[1] = (Hint){ "B", u->ag_in ? "Up" : "Close" };', 'hints[1] = (Hint){ "B", "Up" };'),
     ('B in the settings rows closes the window', "case KEY_ESC: if (u->set_in) { u->set_in = false; dirty(u, DIRTY_SETTINGS); } else settings_close(u); break;", "case KEY_ESC: settings_close(u); break;"),
     ('the screen timeout is applied when nothing changed', "if (secs != u->sys.screen_timeout) { u->sys.screen_timeout = secs; eff(u, EFF_SET_SCREEN_TIMEOUT, secs, 0, 0, 0, NULL); }", "u->sys.screen_timeout = secs; eff(u, EFF_SET_SCREEN_TIMEOUT, secs, 0, 0, 0, NULL);"),
     ('entering the settings rows ignores the option that applies', "u->set_opt = on >= 0 ? on : 0;", "u->set_opt = 0;"),

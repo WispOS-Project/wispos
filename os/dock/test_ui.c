@@ -712,6 +712,13 @@ static void t_addgame(void)
     check_str("then the programs", U.ag_e[2].name, "setup.EXE");
     check_str("in order", U.ag_e[3].name, "WoW.exe");
     check_int("the pad starts in the places", U.ag_in, 0);
+    UiViews *hv = malloc(sizeof *hv);
+    ui_make_views(&U, hv);
+    check_str("B closes from the places", hv->ag_hints[1].label, "Close");
+    U.ag_in = true; ui_make_views(&U, hv);
+    check_str("B goes up from the listing", hv->ag_hints[1].label, "Up");
+    U.ag_in = false;
+    free(hv);
     key(KEY_DOWN);
     EXPECT("down moves to the next place and lists it", "ag-list:/storage/games");
     check_int("the second place", U.ag_place, 1);
