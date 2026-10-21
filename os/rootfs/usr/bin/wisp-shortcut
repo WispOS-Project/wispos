@@ -1,0 +1,204 @@
+#!/usr/bin/python3
+"""WispOS: add a game that is not in the Steam library to Steam's library as a shortcut (issue #46).
+
+Steam's gamepad UI has no "Add a Non-Steam Game" action and desktop mode does not run Steam, so the entry is written to Steam's own file for such games,
+`userdata/<id>/config/shortcuts.vdf`, while Steam is NOT running; the next Steam start lists it in the library. A shortcut has no per-app compatibility mapping recorded by Steam,
+so a Windows .exe runs under the image's default tool (the global default seeded by wisp-steam-seed).
+
+  wisp-shortcut add --name NAME --exe PATH [--start-dir DIR] [--options STRING] [--file shortcuts.vdf]
+  wisp-shortcut list [--file shortcuts.vdf]
+  wisp-shortcut remove --name NAME [--file shortcuts.vdf]
+
+`add` is idempotent: the same name and exe again changes nothing, a different start directory or launch options update the entry. Other entries are kept as they are. The
+file is rewritten in place (atomically) after one backup, `shortcuts.vdf.wisp-bak`, which is never overwritten. A file this tool does not understand is left alone (exit 1). It
+refuses (exit 4) while Steam runs: a running client rewrites the file from memory. Without --file the one `userdata/*/config/shortcuts.vdf` directory of the Steam root is used
+(exit 2 when there is no user or more than one).
+
+The binary format (Valve's "Steam Library Shortcuts", checked against the file Steam wrote on the handheld): a type byte, a null-terminated key, then a value: 0x00 a nested map ended
+by 0x08, 0x01 a null-terminated string, 0x02 a 32-bit little-endian integer. The `appid` of an entry is CRC-32 of the quoted exe path followed by the name, with the top bit set, the
+community formula; Steam uses the stored value, which is what everything else (artwork, the compatibility mapping) is keyed by.
+exit 0 = done (or nothing to do), 1 = file not understood, 2 = no unique Steam user, 3 = usage, 4 = Steam is running.
+"""
+import argparse, glob, os, struct, sys, zlib
+
+STEAM_ROOT = os.environ.get('WISP_STEAM_ROOT', '/storage/wispos/home/.local/share/Steam')
+BACKUP_SUFFIX = '.wisp-bak'
+MAP, STR, INT, END = 0x00, 0x01, 0x02, 0x08
+
+
+class VdfError(Exception):
+    pass
+
+
+def parse(data):
+    """The root map of a binary VDF as an ordered list of (key, value) pairs; a value is a str, an int or such a list. Anything else raises VdfError."""
+    pos = 0
+
+    def cstr():
+        nonlocal pos
+        end = data.find(b'\0', pos)
+        if end < 0: raise VdfError('unterminated string')
+        s = data[pos:end].decode('utf-8', 'surrogateescape'); pos = end + 1
+        return s
+
+    def entries():
+        nonlocal pos
+        out = []
+        while True:
+            if pos >= len(data): raise VdfError('map not closed')
+            t = data[pos]; pos += 1
+            if t == END: return out
+            key = cstr()
+            if t == MAP: out.append((key, entries()))
+            elif t == STR: out.append((key, cstr()))
+            elif t == INT:
+                if pos + 4 > len(data): raise VdfError('short integer')
+                out.append((key, struct.unpack_from('<I', data, pos)[0])); pos += 4
+            else: raise VdfError('unknown type byte 0x%02x' % t)
+
+    root = entries()
+    if data[pos:].strip(b'\0'): raise VdfError('data after the root map')
+    return root
+
+
+def serialize(items):
+    out = bytearray()
+
+    def cs(s): return s.encode('utf-8', 'surrogateescape') + b'\0'
+
+    def put(items):
+        for key, val in items:
+            if isinstance(val, list): out.append(MAP); out.extend(cs(key)); put(val); out.append(END)
+            elif isinstance(val, str): out.append(STR); out.extend(cs(key)); out.extend(cs(val))
+            else: out.append(INT); out.extend(cs(key)); out.extend(struct.pack('<I', val & 0xffffffff))
+    put(items)
+    out.append(END)                                                             # the root map's own end, as Steam writes it
+    return bytes(out)
+
+
+def appid(exe_quoted, name):
+    return (zlib.crc32((exe_quoted + name).encode('utf-8')) & 0xffffffff) | 0x80000000
+
+
+def quoted(path): return '"%s"' % path.strip('"')
+
+
+def new_entry(name, exe, start_dir, options):
+    q = quoted(exe)
+    return [('appid', appid(q, name)), ('AppName', name), ('Exe', q), ('StartDir', quoted(start_dir)), ('icon', ''), ('ShortcutPath', ''), ('LaunchOptions', options),
+            ('IsHidden', 0), ('AllowDesktopConfig', 1), ('AllowOverlay', 1), ('OpenVR', 0), ('Devkit', 0), ('DevkitGameID', ''), ('DevkitOverrideAppID', 0), ('LastPlayTime', 0),
+            ('FlatpakAppID', ''), ('tags', [])]
+
+
+def get(entry, key, default=None):
+    for k, v in entry:
+        if k.lower() == key.lower(): return v
+    return default
+
+
+def put_field(entry, key, value):
+    for i, (k, _) in enumerate(entry):
+        if k.lower() == key.lower(): entry[i] = (k, value); return
+    entry.append((key, value))
+
+
+def shortcuts_of(root):
+    for i, (k, v) in enumerate(root):
+        if k.lower() == 'shortcuts' and isinstance(v, list): return v
+    raise VdfError('no "shortcuts" map')
+
+
+def add(root, name, exe, start_dir, options):
+    """(status, appid) after changing root in place: 'added', 'updated' or 'present'."""
+    sc = shortcuts_of(root)
+    q = quoted(exe)
+    for _, e in sc:
+        if isinstance(e, list) and get(e, 'AppName') == name and get(e, 'Exe') == q:
+            changed = False
+            for key, val in (('StartDir', quoted(start_dir)), ('LaunchOptions', options)):
+                if get(e, key) != val: put_field(e, key, val); changed = True
+            return ('updated' if changed else 'present'), get(e, 'appid')
+    idx = max([int(k) for k, _ in sc if k.isdigit()] + [-1]) + 1
+    e = new_entry(name, exe, start_dir, options)
+    sc.append((str(idx), e))
+    return 'added', get(e, 'appid')
+
+
+def remove(root, name):
+    sc = shortcuts_of(root)
+    keep = [(k, v) for k, v in sc if not (isinstance(v, list) and get(v, 'AppName') == name)]
+    n = len(sc) - len(keep)
+    sc[:] = [(str(i), v) for i, (_, v) in enumerate(keep)]                      # Steam numbers its entries 0, 1, 2 ...
+    return n
+
+
+def steam_running():
+    for d in glob.glob('/proc/[0-9]*/comm'):
+        try:
+            with open(d) as f:
+                if f.read().strip() == 'steam': return True
+        except OSError: pass
+    return False
+
+
+def default_file():
+    found = glob.glob(os.path.join(STEAM_ROOT, 'userdata', '[0-9]*', 'config'))
+    found = [d for d in found if os.path.basename(os.path.dirname(d)) != '0']
+    if len(found) != 1: return None
+    return os.path.join(found[0], 'shortcuts.vdf')
+
+
+def read_file(path):
+    if not os.path.exists(path): return [('shortcuts', [])]
+    with open(path, 'rb') as f: data = f.read()
+    return parse(data) if data.strip(b'\0') else [('shortcuts', [])]
+
+
+def write_file(path, root):
+    if os.path.exists(path) and not os.path.exists(path + BACKUP_SUFFIX):
+        with open(path, 'rb') as src, open(path + BACKUP_SUFFIX, 'wb') as dst: dst.write(src.read())
+    mode = os.stat(path).st_mode & 0o777 if os.path.exists(path) else 0o644
+    tmp = path + '.wisp-tmp'
+    with open(tmp, 'wb') as f: f.write(serialize(root))
+    os.chmod(tmp, mode); os.replace(tmp, path)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog='wisp-shortcut', add_help=True)
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    for name in ('add', 'list', 'remove'):
+        p = sub.add_parser(name); p.add_argument('--file')
+        if name in ('add', 'remove'): p.add_argument('--name', required=True)
+        if name == 'add':
+            p.add_argument('--exe', required=True); p.add_argument('--start-dir'); p.add_argument('--options', default='')
+    try: a = ap.parse_args(argv)
+    except SystemExit as e: return 3 if e.code else 0
+    path = a.file or default_file()
+    if not path: print('wisp-shortcut: no single Steam user under %s; pass --file' % STEAM_ROOT, file=sys.stderr); return 2
+    if a.cmd != 'list' and os.environ.get('WISP_SHORTCUT_NO_STEAM_CHECK') != '1' and steam_running():
+        print('wisp-shortcut: Steam is running; stop it first (a running client rewrites the file)', file=sys.stderr); return 4
+    try: root = read_file(path)
+    except (VdfError, OSError) as e:
+        print('wisp-shortcut: %s: %s; left alone' % (path, e), file=sys.stderr); return 1
+    if a.cmd == 'list':
+        try: sc = shortcuts_of(root)
+        except VdfError as e: print('wisp-shortcut: %s: %s' % (path, e), file=sys.stderr); return 1
+        for _, e in sc:
+            if isinstance(e, list): print('%d\t%s\t%s\t%s' % (get(e, 'appid', 0), get(e, 'AppName', ''), get(e, 'Exe', ''), get(e, 'LaunchOptions', '')))
+        return 0
+    try:
+        if a.cmd == 'add':
+            start = a.start_dir or os.path.dirname(a.exe.strip('"'))
+            status, aid = add(root, a.name, a.exe, start, a.options)
+            if status != 'present': write_file(path, root)
+            print('wisp-shortcut: %s "%s" (appid %d)' % (status, a.name, aid))
+        else:
+            n = remove(root, a.name)
+            if n: write_file(path, root)
+            print('wisp-shortcut: removed %d entr%s named "%s"' % (n, 'y' if n == 1 else 'ies', a.name))
+    except VdfError as e:
+        print('wisp-shortcut: %s: %s; left alone' % (path, e), file=sys.stderr); return 1
+    return 0
+
+
+if __name__ == '__main__': sys.exit(main(sys.argv[1:]))
