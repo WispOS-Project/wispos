@@ -46,7 +46,7 @@ that ran from checks still outstanding. A bug fix includes a regression test sho
 failing before the fix and passing afterward. UI changes include inspected captures.
 See [the release guide](docs/RELEASING.md) for the build and update sequence.
 
-Every behavior change adds an Unreleased changelog entry with its SemVer class.
+Every behavior change adds a changelog fragment, `changelog.d/<issue>.<class>.md`, naming its SemVer class (see `changelog.d/README.md`); do not edit `CHANGELOG.md` directly.
 Use conventional commit subjects and an issue footer (`Refs #N`, or `Fixes #N`
 when complete). Run `tools/install-hooks.sh` once per clone/worktree for the commit backstop. Existing custom/default hooks are preserved: the installer
 refuses to replace them; integrate the validator into that hook suite explicitly.
