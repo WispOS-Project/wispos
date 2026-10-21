@@ -93,6 +93,14 @@ static void t_ssh_usb(void)
     check_int("usb off", sys_parse_usb("usb: off\nhost: available\n"), 0);
     check_int("computer", sys_parse_usb("usb: computer\ncomputer: on\n"), 1);
     check_int("host", sys_parse_usb("usb: host\n"), 2);
+    check_int("sleep is offered", sys_parse_can_sleep("sleep: yes\n"), 1);
+    check_int("sleep is not offered", sys_parse_can_sleep("sleep: no\n"), 0);
+    check_int("no newline is fine", sys_parse_can_sleep("sleep: yes"), 1);
+    check_int("a longer word is not yes", sys_parse_can_sleep("sleep: yesterday\n"), -1);
+    check_int("a longer word is not no", sys_parse_can_sleep("sleep: nothing\n"), -1);
+    check_int("another tool's line is not understood", sys_parse_can_sleep("usb: off\n"), -1);
+    check_int("a line that only ends like ours is not ours", sys_parse_can_sleep("usb:   yes\n"), -1);
+    check_int("nothing is not understood", sys_parse_can_sleep(""), -1);
     check_int("a timeout in seconds", sys_parse_screen_timeout("300\n"), 300);
     check_int("off is never", sys_parse_screen_timeout("off\n"), 0);
     check_int("Off in any case", sys_parse_screen_timeout("OFF"), 0);

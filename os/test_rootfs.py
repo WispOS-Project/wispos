@@ -492,6 +492,33 @@ class StageRootfsTests(unittest.TestCase):
         if shutil.which('busybox'): shells.append(['busybox', 'sh'])      # NOTE: the host's busybox sh runs ITS OWN mke2fs/mount/umount/partprobe applets before $PATH, so the fake tools
         return shells                                          # cannot stand in there: scenarios that reach the tools run under `sh` only, refusals and parsing under both
 
+    def test_wisp_power_is_the_one_path_for_sleep_restart_and_shutdown(self):
+        # Issue #13: the desktop calls one audited command for power actions; it takes exactly one known word, maps it to one systemd verb, and refuses sleep on a kernel without suspend.
+        import os, subprocess, tempfile
+        d = Path(tempfile.mkdtemp(prefix='wispos-power-', dir=os.environ.get('TMPDIR')))
+        log = d / 'systemctl.log'
+        ctl = d / 'systemctl'; ctl.write_text('#!/bin/sh\necho "$@" >> "%s"\n' % log); ctl.chmod(0o755)
+        state = d / 'state'
+        script = str(HERE / 'rootfs/usr/bin/wisp-power')
+        def run(*a, sleepy=True):
+            state.write_text('freeze mem disk\n' if sleepy else 'freeze\n')
+            return subprocess.run(['sh', script, *a], env={**os.environ, 'WISP_POWER_STATE': str(state), 'WISP_SYSTEMCTL': str(ctl)}, capture_output=True, text=True)
+        self.assertEqual(run('can-sleep').stdout.strip(), 'sleep: yes')
+        self.assertEqual(run('can-sleep', sleepy=False).stdout.strip(), 'sleep: no')
+        self.assertFalse(log.exists(), 'asking is not doing')
+        for word, verb in (('sleep', 'suspend'), ('restart', 'reboot'), ('shutdown', 'poweroff')):
+            log.unlink(missing_ok=True)
+            r = run(word); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(log.read_text().split(), [verb], word)
+        log.unlink(missing_ok=True)
+        r = run('sleep', sleepy=False)
+        self.assertEqual(r.returncode, 3); self.assertIn('no suspend', r.stderr); self.assertFalse(log.exists(), 'a kernel without suspend is never asked to suspend')
+        for bad in (['poweroff'], ['reboot'], ['sleep', 'now'], ['restart', '--force'], [], ['']):
+            r = run(*bad); self.assertEqual(r.returncode, 2, bad); self.assertFalse(log.exists(), 'nothing unknown or extra reaches systemd: %r' % bad)
+        # not a substring match: a state file that merely contains the letters is not suspend-to-RAM
+        for text in ('memory-ish\n', 'mem-deep\n', 'xmem mem.x\n'):
+            state.write_text(text); r = subprocess.run(['sh', script, 'can-sleep'], env={**os.environ, 'WISP_POWER_STATE': str(state)}, capture_output=True, text=True)
+            self.assertEqual(r.stdout.strip(), 'sleep: no', text)
+
     def test_the_screen_timeout_can_be_read_and_set_through_wisp_screen(self):
         # Issue #6: the 120 s blank timeout was only changeable by writing /storage/wispos/config/screen-timeout by hand. `wisp-screen timeout [SECS|off|status]` is the one entry point
         # for scripts and the UI; the file stays the single authority (wisp-screen-idle re-reads it every second, so a change is live) and the value 0 (never blank) is how blanking is turned

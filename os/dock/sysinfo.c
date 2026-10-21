@@ -89,6 +89,14 @@ int sys_parse_screen_timeout(const char *out)
     return (*out == 0 || *out == '\n' || *out == '\r' || *out == ' ') ? (int)v : -1;
 }
 
+int sys_parse_can_sleep(const char *out)
+{
+    if (strncmp(out, "sleep: ", 7) != 0) return -1;
+    if (!strncmp(out + 7, "yes", 3) && (out[10] == 0 || out[10] == '\n' || out[10] == '\r')) return 1;
+    if (!strncmp(out + 7, "no", 2) && (out[9] == 0 || out[9] == '\n' || out[9] == '\r')) return 0;
+    return -1;
+}
+
 static bool read_text(const char *path, char *buf, size_t cap)
 {
     FILE *f = fopen(path, "r");

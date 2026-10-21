@@ -247,7 +247,7 @@ static int qs_row_height(const QsRow *r)
 {
     int rh = WISP_UI_POPUP_ROW + 6;
     if (r->kind == QS_SWITCH && r->value) return rh + 10;
-    if (r->kind == QS_CHOICE) return rh + rh / 2;
+    if (r->kind == QS_CHOICE || r->kind == QS_ACTION || r->kind == QS_ASK) return rh + rh / 2;
     if (r->kind == QS_NOTE) return 30;
     return rh;
 }
@@ -270,14 +270,18 @@ QsHit view_quick_hit(const QsView *q, int px, int py)
 {
     const int pw = WISP_UI_QS_W;
     VRect r = view_quick_rect(q);
-    QsHit none = { -1, 0.f };
+    QsHit none = { -1, 0.f, -1 };
     if (px < r.x0 || px >= r.x1 || py < r.y0 || py >= r.y1) return none;
     none.row = -2;
     int y = r.y0 + 12;
     for (int i = 0; i < q->n; i++) {
         int hh = qs_row_height(&q->rows[i]);
         if (q->rows[i].kind != QS_NOTE && py >= y && py < y + hh - 6 && px >= r.x0 + 10 && px < r.x0 + pw - 10) {
-            QsHit h = { i, 0.f };
+            QsHit h = { i, 0.f, -1 };
+            if (q->rows[i].kind == QS_ASK) {                                                     /* the two buttons of an asking row */
+                int bw = 70, bx = r.x0 + pw - 10 - 2 * bw - 14, by = y + (hh - 6) / 2 + 9;
+                if (py >= by && py < by + 18) h.opt = (px >= bx && px < bx + bw) ? 0 : (px >= bx + bw + 6 && px < bx + 2 * bw + 6) ? 1 : -1;
+            }
             if (q->rows[i].kind == QS_SLIDER) {
                 float t = (float)(px - (r.x0 + 62)) / (float)(pw - 28 - 62);
                 h.frac = t < 0.f ? 0.f : t > 1.f ? 1.f : t;
@@ -286,6 +290,7 @@ QsHit view_quick_hit(const QsView *q, int px, int py)
         }
         y += hh;
     }
+    if (q->power_btn && px >= r.x1 - 12 - 40 && px < r.x1 - 12 && py >= r.y1 - 31 && py < r.y1 - 5) { QsHit h = { QS_POWER_BTN, 0.f, -1 }; return h; }
     return none;
 }
 
@@ -311,6 +316,29 @@ void view_quick(const Vctx *v, const QsView *q)
         if (r->kind == QS_BACK) {
             view_glyph(v, "left", 0, 18, (float)(x0 + 28), (float)top, sel ? FOCUS_FG : GLYPHC);
             rd_text(v->c, v->f->small_bold, IX(v, x0 + 50), IY(v, top), r->label, fg, RD_LEFT, RD_MIDDLE);
+            y += hh;
+            continue;
+        }
+        if (r->kind == QS_ACTION) {
+            view_glyph(v, r->glyph, 0, 18, (float)(x0 + 32), (float)top, sel ? FOCUS_FG : GLYPHC);
+            rd_text(v->c, v->f->small, IX(v, x0 + 58), IY(v, top - 8), r->label, fg, RD_LEFT, RD_MIDDLE);
+            if (r->value) rd_text_fit(v->c, v->f->tiny, IX(v, x0 + 58), IY(v, top + 11), pw - 58 - 20, r->value, dim, RD_LEFT, RD_MIDDLE);
+            y += hh;
+            continue;
+        }
+        if (r->kind == QS_ASK) {
+            rd_rrect(v->c, X(v, x0 + 10), Y(v, y), X(v, x0 + pw - 10), Y(v, y + hh - 6), WISP_UI_RADIUS, PANEL);          /* the row itself is not the focus: one of its buttons is */
+            view_glyph(v, r->glyph, 0, 18, (float)(x0 + 32), (float)top, GLYPHC);
+            char q2[48]; snprintf(q2, sizeof q2, "%s?", r->label);
+            rd_text(v->c, v->f->small, IX(v, x0 + 58), IY(v, top - 17), q2, TEXT, RD_LEFT, RD_MIDDLE);
+            if (r->value) rd_text_fit(v->c, v->f->tiny, IX(v, x0 + 58), IY(v, top - 1), pw - 58 - 20, r->value, DIM, RD_LEFT, RD_MIDDLE);
+            int bw = 70, bx = x0 + pw - 10 - 2 * bw - 14, by = top + 9;
+            for (int b = 0; b < 2; b++) {
+                int bx0 = bx + b * (bw + 6); bool on = r->level == b;
+                rd_rrect(v->c, X(v, bx0), Y(v, by), X(v, bx0 + bw), Y(v, by + 18), WISP_UI_RADIUS, on ? FOCUS : LINE);
+                if (on) rd_rrect_ring(v->c, X(v, bx0), Y(v, by), X(v, bx0 + bw), Y(v, by + 18), WISP_UI_RADIUS, 2.f, ACCENT);
+                rd_text(v->c, v->f->tiny, IX(v, bx0 + bw / 2), IY(v, by + 9), b == 0 ? "Cancel" : r->label, on ? FOCUS_FG : TEXT, RD_CENTER, RD_MIDDLE);
+            }
             y += hh;
             continue;
         }
@@ -348,6 +376,12 @@ void view_quick(const Vctx *v, const QsView *q)
     }
     int hx = x0 + 14;
     for (int i = 0; i < q->nhints; i++) hx = view_key_pill(v, hx, y1 - foot + 4, q->hints[i].key, q->hints[i].label, PANEL);
+    if (q->power_btn) {                                                                      /* the small power button at the footer's right */
+        bool foc = q->power_btn == 2;
+        int bx1 = x0 + pw - 12, by0 = y1 - 31;
+        rd_rrect(v->c, X(v, bx1 - 40), Y(v, by0), X(v, bx1), Y(v, by0 + 26), WISP_UI_RADIUS, foc ? FOCUS : PANEL);
+        view_glyph(v, "power", 0, 18, (float)(bx1 - 20), (float)(by0 + 13), foc ? FOCUS_FG : GLYPHC);
+    }
 }
 
 /* ------------------------------------------------------------------ the settings panel */
@@ -368,8 +402,7 @@ void view_settings(const Vctx *v, const SettingsView *s)
         bool on = i == s->page;
         if (on) rd_rrect(v->c, X(v, 10), Y(v, y), X(v, SET_SIDE - 8), Y(v, y + 40), WISP_UI_RADIUS, FOCUS);
         RdColor ink = on ? FOCUS_FG : GLYPHC;
-        if (strcmp(s->pages[i].glyph, "battery") == 0) battery(v, 18, 32.f, (float)(y + 20), ink, s->pages[i].level);
-        else view_glyph(v, s->pages[i].glyph, (int)s->pages[i].level, 18, 32.f, (float)(y + 20), ink);
+        view_glyph(v, s->pages[i].glyph, (int)s->pages[i].level, 18, 32.f, (float)(y + 20), ink);
         rd_text(v->c, v->f->small, IX(v, 52), IY(v, y + 20), s->pages[i].name, on ? FOCUS_FG : TEXT, RD_LEFT, RD_MIDDLE);
     }
     rd_vline(v->c, X(v, SET_SIDE), Y(v, 52), Y(v, DOCK_TOP - 10), 1.f, LINE);

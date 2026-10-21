@@ -1,6 +1,6 @@
 /* Tests of the desktop shell's UI state machine (ui.c): scripted flows (the dock, its actions list, the application menu, the quick settings, the on-screen keyboard, the pointer) and a
  * random run that checks the state stays consistent. Effects are written as short words: launch:<id> activate:<window> close:<window> save game type:<key>[+shift][+ctrl] pad-osk:<0|1>
- * pad-focus:<app> volume:<f> brightness:<f> bluetooth:<0|1> ssh:<0|1> usb:<0|1|2> screen-timeout:<seconds> wifi refresh browser-actions.
+ * pad-focus:<app> volume:<f> brightness:<f> bluetooth:<0|1> ssh:<0|1> usb:<0|1|2> screen-timeout:<seconds> power:<0 sleep|1 restart|2 shut down> wifi refresh browser-actions.
  * Run by os/test_dock_ui.py under the sanitizers and against rule mutants of ui.c. */
 #define _GNU_SOURCE
 #include "ui.h"
@@ -114,6 +114,7 @@ static const char *effs(void)
         case EFF_SET_SSH: snprintf(w, sizeof w, "ssh:%d", e[i].a); break;
         case EFF_SET_USB: snprintf(w, sizeof w, "usb:%d", e[i].a); break;
         case EFF_SET_SCREEN_TIMEOUT: snprintf(w, sizeof w, "screen-timeout:%d", e[i].a); break;
+        case EFF_POWER: snprintf(w, sizeof w, "power:%d", e[i].a); break;
         case EFF_WIFI: snprintf(w, sizeof w, "wifi"); break;
         case EFF_REFRESH: snprintf(w, sizeof w, "refresh"); break;
         case EFF_BROWSER_ACTIONS: snprintf(w, sizeof w, "browser-actions"); break;
@@ -536,7 +537,7 @@ static void t_quick_settings(void)
     key(KEY_ENTER);
     EXPECT("back to off", "usb:0");
     key(KEY_DOWN);
-    check_int("the battery row is information: the selection stays on USB", U.qs_sel, 5);
+    check_int("the battery row is information: the selection skips it, to the power button", U.qs_sel, QS_POWER_BTN);
     key(KEY_UP); key(KEY_UP); key(KEY_UP); key(KEY_UP); key(KEY_UP); key(KEY_UP); key(KEY_UP);
     check_int("up stops at Wi-Fi", U.qs_sel, 0);
     key(KEY_ESC);
@@ -620,7 +621,9 @@ static void t_settings(void)
     check_int("above the strip, which keeps its space", g.settings_h, WISP_UI_H - WISP_UI_DOCK_H);
     check_true("the pad starts in the list of pages", !U.set_in);
     key(KEY_TAB);
-    check_int("Tab on the last page stays on it", U.set_page, 0);
+    check_int("Tab stays on the only page", U.set_page, 0);
+    ui_key(&U, KEY_TAB, "", UI_SHIFT);
+    check_int("Shift+Tab too", U.set_page, 0);
     key(KEY_RIGHT);
     check_true("right enters the rows", U.set_in);
     check_int("on the option that applies (2 min)", U.set_opt, 2);
@@ -673,6 +676,144 @@ static void t_settings(void)
     pad("settings"); pad("menu");
     check_true("the application menu replaces it", !U.settings && U.menu);
     pad("menu");
+}
+
+static void t_quick_power(void)
+{
+    fresh(true);
+    U.sys.sleep_ok = 0;
+    pad("qs");
+    effs();
+    UiViews *vw = malloc(sizeof *vw);
+    ui_make_views(&U, vw);
+    int list_h = view_quick_height(&vw->qs);
+    check_int("the power button is shown", vw->qs.power_btn, 1);
+    for (int i = 0; i < 5; i++) key(KEY_DOWN);
+    check_int("down to the USB row", U.qs_sel, 5);
+    key(KEY_DOWN);
+    check_int("down from the USB row reaches the power button, skipping the battery row", U.qs_sel, QS_POWER_BTN);
+    key(KEY_DOWN);
+    check_int("and stops there", U.qs_sel, QS_POWER_BTN);
+    ui_make_views(&U, vw);
+    check_int("the button has the focus", vw->qs.power_btn, 2);
+    key(KEY_UP);
+    check_int("up returns to the USB row", U.qs_sel, 5);
+    key(KEY_DOWN);
+    key(KEY_ENTER);
+    check_int("A opens the Power submenu", U.qs_page, 2);
+    check_int("on its first action", U.qs_sel, 1);
+    ui_make_views(&U, vw);
+    check_int("a back row and two actions when the kernel cannot sleep", vw->qs.n, 3);
+    check_true("Restart first", vw->qs_rows[1].kind == QS_ACTION && !strcmp(vw->qs_rows[1].label, "Restart"));
+    check_true("then Shut down", !strcmp(vw->qs_rows[2].label, "Shut down"));
+    check_int("the panel keeps the list's size", view_quick_height(&vw->qs), list_h);
+    check_int("the button is gone inside the submenu", vw->qs.power_btn, 0);
+    U.sys.sleep_ok = -1;
+    ui_make_views(&U, vw);
+    check_int("two actions while it is not known", vw->qs.n, 3);
+    U.sys.sleep_ok = 1;
+    ui_make_views(&U, vw);
+    check_int("three actions when it can", vw->qs.n, 4);
+    check_true("Sleep first", !strcmp(vw->qs_rows[1].label, "Sleep"));
+    key(KEY_ENTER);
+    EXPECT("sleep asks nothing", "power:0");
+    check_int("and the panel leaves", U.dock, UI_IDLE);
+
+    U.sys.sleep_ok = 0;
+    pad("qs"); effs();
+    check_int("a reopened panel is the list", U.qs_page, 0);
+    for (int i = 0; i < 6; i++) key(KEY_DOWN);
+    key(KEY_ENTER);
+    check_int("Restart is the first action", U.qs_sel, 1);
+    key(KEY_ENTER);
+    EXPECT("restart asks first", "");
+    check_int("the question is Restart's", U.qs_confirm, 1);
+    check_int("Cancel is under the pad", U.qs_opt, 0);
+    ui_make_views(&U, vw);
+    check_true("the row is asking, with Cancel focused", vw->qs_rows[1].kind == QS_ASK && vw->qs_rows[1].level == 0 && !strcmp(vw->qs_rows[1].label, "Restart"));
+    check_true("the other row is untouched", vw->qs_rows[2].kind == QS_ACTION);
+    key(KEY_ENTER);
+    EXPECT("Cancel does nothing", "");
+    check_int("and the question goes", U.qs_confirm, -1);
+    check_int("the submenu stays", U.qs_page, 2);
+    key(KEY_ENTER); key(KEY_RIGHT); key(KEY_RIGHT);
+    check_int("right stops at the action", U.qs_opt, 1);
+    key(KEY_LEFT);
+    check_int("left returns to Cancel and does not leave the question", U.qs_opt == 0 && U.qs_confirm == 1 && U.qs_page == 2, 1);
+    key(KEY_RIGHT); key(KEY_ENTER);
+    EXPECT("the second button does it", "power:1");
+    check_int("and the panel leaves", U.dock, UI_IDLE);
+
+    pad("qs"); effs();
+    for (int i = 0; i < 6; i++) key(KEY_DOWN);
+    key(KEY_ENTER); key(KEY_DOWN); key(KEY_ENTER);
+    check_int("Shut down is asking", U.qs_confirm, 2);
+    key(KEY_ESC);
+    check_int("B withdraws the question", U.qs_confirm, -1);
+    check_int("and stays in the submenu", U.qs_page, 2);
+    key(KEY_ENTER); key(KEY_UP);
+    check_int("moving to another row withdraws it", U.qs_confirm, -1);
+    key(KEY_DOWN); key(KEY_ENTER);
+    check_int("asking again", U.qs_confirm, 2);
+    key(KEY_LEFT);
+    check_true("left from Cancel returns to the list and drops the question", U.qs_page == 0 && U.qs_confirm == -1 && U.qs_sel == QS_POWER_BTN);
+    EXPECT("still nothing was done", "");
+    key(KEY_ENTER);
+    check_int("A on the button opens the submenu again", U.qs_page, 2);
+    key(KEY_ESC);
+    check_true("B returns to the list with the power button selected", U.qs_page == 0 && U.qs_sel == QS_POWER_BTN);
+    key(KEY_ENTER); key(KEY_UP);
+    check_int("up to the back row", U.qs_sel, 0);
+    key(KEY_ENTER);
+    check_true("A on the back row returns to the list", U.qs_page == 0 && U.qs_sel == QS_POWER_BTN);
+    key(KEY_ENTER); key(KEY_LEFT);
+    check_true("left in the submenu returns to the list", U.qs_page == 0 && U.qs_sel == QS_POWER_BTN);
+    key(KEY_ENTER); key(KEY_ENTER);
+    check_int("a question is open", U.qs_confirm, 1);
+    pad("qs");
+    pad("qs");
+    check_true("a reopened panel is the list with no question", U.qs_confirm == -1 && U.qs_page == 0);
+    free(vw);
+}
+
+static void t_quick_power_pointer(void)
+{
+    fresh(true);
+    U.sys.sleep_ok = 0;
+    pad("qs");
+    effs();
+    UiViews *vw = malloc(sizeof *vw);
+    ui_make_views(&U, vw);
+    VRect pr = view_quick_rect(&vw->qs);
+    ui_pointer(&U, SURF_DOCK, pr.x1 - 12 - 20, pr.y1 - 18, PTR_MOVE, 0);
+    check_int("hovering the power button selects it", U.qs_sel, QS_POWER_BTN);
+    ui_pointer(&U, SURF_DOCK, pr.x1 - 12 - 20, pr.y1 - 18, PTR_DOWN, BTN_RIGHT);
+    check_int("a right click on it does nothing", U.qs_page, 0);
+    ui_pointer(&U, SURF_DOCK, pr.x1 - 12 - 20, pr.y1 - 18, PTR_DOWN, BTN_LEFT);
+    check_int("a click on it opens the Power submenu", U.qs_page, 2);
+    int top1 = pr.y0 + 12 + 42, top2 = top1 + 63, rowx = pr.x0 + 100;
+    int bx = pr.x0 + WISP_UI_QS_W - 10 - 2 * 70 - 14, cancel = bx + 35, act = bx + 76 + 35;
+    ui_pointer(&U, SURF_DOCK, rowx, top1 + 25, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on Restart asks first", "");
+    check_int("the question is Restart's", U.qs_confirm, 1);
+    ui_pointer(&U, SURF_DOCK, rowx, top1 + 25, PTR_DOWN, BTN_LEFT);
+    check_int("a click on the asking row outside its buttons keeps the question", U.qs_confirm, 1);
+    ui_pointer(&U, SURF_DOCK, cancel, top1 + 46, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on Cancel does nothing", "");
+    check_int("and withdraws the question", U.qs_confirm, -1);
+    ui_pointer(&U, SURF_DOCK, rowx, top1 + 25, PTR_DOWN, BTN_LEFT);
+    ui_pointer(&U, SURF_DOCK, rowx, top2 + 25, PTR_DOWN, BTN_LEFT);
+    check_int("a click on another row withdraws the question and asks its own", U.qs_confirm, 2);
+    ui_pointer(&U, SURF_DOCK, act, top2 + 46, PTR_DOWN, BTN_RIGHT);
+    EXPECT("a right click on the action does nothing", "");
+    ui_pointer(&U, SURF_DOCK, act, top2 + 46, PTR_DOWN, BTN_LEFT);
+    EXPECT("a click on the action does it", "power:2");
+    check_int("and the panel leaves", U.dock, UI_IDLE);
+    pad("qs"); effs();
+    ui_pointer(&U, SURF_DOCK, pr.x1 - 12 - 20, pr.y1 - 18, PTR_DOWN, BTN_LEFT);
+    ui_pointer(&U, SURF_DOCK, rowx, pr.y0 + 12 + 20, PTR_DOWN, BTN_LEFT);
+    check_true("a click on the back row returns to the list", U.qs_page == 0 && U.qs_sel == QS_POWER_BTN);
+    free(vw);
 }
 
 static void t_dock_pointer_under_the_menu(void)
@@ -1153,7 +1294,7 @@ static void invariants(const char *when)
     if (U.dock == UI_IDLE) { if (U.focus != -1) { failed++; printf("FAIL %s: idle dock with a focus\n", w); } }
     else if (U.focus < 0 || U.focus >= U.n || U.items[U.focus].kind == WD_SEP) { failed++; printf("FAIL %s: modal dock with a bad focus %d\n", w, U.focus); }
     if (U.dock == UI_ACTIONS_OPEN && (U.nacts <= 0 || U.act_sel < 0 || U.act_sel >= U.nacts)) { failed++; printf("FAIL %s: actions %d/%d\n", w, U.act_sel, U.nacts); }
-    if (U.dock == UI_QS && (U.qs_sel < 0 || U.qs_sel > 5)) { failed++; printf("FAIL %s: qs row %d\n", w, U.qs_sel); }
+    if (U.dock == UI_QS && (U.qs_sel < 0 || (U.qs_sel > 5 && !(U.qs_page == 0 && U.qs_sel == QS_POWER_BTN)))) { failed++; printf("FAIL %s: qs row %d\n", w, U.qs_sel); }
     if (U.menu && U.mn > 0 && (U.msel < 0 || U.msel >= U.mn || U.mtop < 0)) { failed++; printf("FAIL %s: menu %d/%d top %d\n", w, U.msel, U.mn, U.mtop); }
     if (U.menu && U.dock != UI_IDLE) { failed++; printf("FAIL %s: the menu and a dock panel at once\n", w); }
     if (U.osk && (U.dock != UI_IDLE || U.menu) && 0) { failed++; printf("FAIL %s: keyboard together with a panel\n", w); }
@@ -1162,6 +1303,8 @@ static void invariants(const char *when)
     if (U.shift && U.page == OSK_SYMBOLS) { failed++; printf("FAIL %s: shift on the symbols page\n", w); }
     if (U.sys.volume < 0.f || U.sys.volume > 1.f || U.sys.brightness < 0.0499f || U.sys.brightness > 1.f) { failed++; printf("FAIL %s: volume %f brightness %f\n", w, (double)U.sys.volume, (double)U.sys.brightness); }
     if (U.settings && (U.menu || U.osk || U.dock != UI_IDLE)) { failed++; printf("FAIL %s: the settings window together with another panel\n", w); }
+    if (U.qs_confirm >= 0 && (U.dock != UI_QS || U.qs_page != 2)) { failed++; printf("FAIL %s: a power question outside the Power submenu (%d)\n", w, U.qs_confirm); }
+    if (U.qs_confirm < -1 || U.qs_confirm > 2) { failed++; printf("FAIL %s: qs_confirm %d\n", w, U.qs_confirm); }
     if (U.set_in && !U.settings) { failed++; printf("FAIL %s: the pad in settings rows with the window closed\n", w); }
     if (U.set_page < 0 || U.set_page >= UI_SET_PAGES || U.set_row < 0 || U.set_row >= UI_SET_ROWS || U.set_opt < 0 || U.set_opt > 5) { failed++; printf("FAIL %s: settings focus %d/%d/%d\n", w, U.set_page, U.set_row, U.set_opt); }
     if (U.pins.n > WD_MAX_PINS) { failed++; printf("FAIL %s: pins\n", w); }
@@ -1188,7 +1331,7 @@ static void t_random(void)
             if (rnd() % 3 == 0) wd_windows_remove(&U.ws, id);
             else wd_windows_update(&U.ws, id, rnd() & 1 ? "foot" : rnd() & 1 ? "swayimg" : "unknown", "w", rnd() % 2);
             ui_windows_changed(&U);
-        } else if (r < 93) { static const int tv[] = { -1, 0, 60, 90, 120, 300, 1800 }; U.sys.bt_available = rnd() & 1; U.sys.usb = (int)(rnd() % 3); U.sys.screen_timeout = tv[rnd() % 7]; }
+        } else if (r < 93) { static const int tv[] = { -1, 0, 60, 90, 120, 300, 1800 }; U.sys.bt_available = rnd() & 1; U.sys.usb = (int)(rnd() % 3); U.sys.screen_timeout = tv[rnd() % 7]; U.sys.sleep_ok = (int)(rnd() % 3) - 1; }
         else if (r < 96) { t += (int64_t)(rnd() % 3000); ui_tick(&U, t); }
         else if (r < 98) { char c[8]; snprintf(c, sizeof c, "%d:%02d", (int)(rnd() % 24), (int)(rnd() % 60)); ui_set_clock(&U, c, 40 + (int)(rnd() % 10)); }
         else { UiEffect sink[UI_EFFECTS]; ui_take_effects(&U, sink, UI_EFFECTS); ui_take_dirty(&U); }
@@ -1213,6 +1356,8 @@ int main(void)
     t_quick_pointer();
     t_settings();
     t_settings_pointer();
+    t_quick_power();
+    t_quick_power_pointer();
     t_dock_pointer_under_the_menu();
     t_osk();
     t_osk_pointer_and_focus();
