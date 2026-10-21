@@ -515,8 +515,9 @@ class StageRootfsTests(unittest.TestCase):
         for bad in (['poweroff'], ['reboot'], ['sleep', 'now'], ['restart', '--force'], [], ['']):
             r = run(*bad); self.assertEqual(r.returncode, 2, bad); self.assertFalse(log.exists(), 'nothing unknown or extra reaches systemd: %r' % bad)
         # not a substring match: a state file that merely contains the letters is not suspend-to-RAM
-        state.write_text('memory-ish\n'); r = subprocess.run(['sh', script, 'can-sleep'], env={**os.environ, 'WISP_POWER_STATE': str(state)}, capture_output=True, text=True)
-        self.assertEqual(r.stdout.strip(), 'sleep: no')
+        for text in ('memory-ish\n', 'mem-deep\n', 'xmem mem.x\n'):
+            state.write_text(text); r = subprocess.run(['sh', script, 'can-sleep'], env={**os.environ, 'WISP_POWER_STATE': str(state)}, capture_output=True, text=True)
+            self.assertEqual(r.stdout.strip(), 'sleep: no', text)
 
     def test_the_screen_timeout_can_be_read_and_set_through_wisp_screen(self):
         # Issue #6: the 120 s blank timeout was only changeable by writing /storage/wispos/config/screen-timeout by hand. `wisp-screen timeout [SECS|off|status]` is the one entry point
